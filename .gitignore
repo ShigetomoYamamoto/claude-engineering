@@ -1,0 +1,7 @@
+# Auto-generated and machine-specific files
+*.pyc
+__pycache__/
+.DS_Store
+
+# Machine-specific credentials
+.credentials.json

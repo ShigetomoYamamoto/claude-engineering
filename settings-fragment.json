@@ -1,0 +1,25 @@
+{
+  "permissions": {
+    "allow": ["Bash(git *)", "Bash(gh *)", "Bash(claude *)", "Bash(curl *)"]
+  },
+  "hooks": {
+    "PreToolUse": [
+      { "matcher": "Edit|Write|MultiEdit", "hooks": [ { "type": "command", "command": "python3 __TARGET__/hooks/protected-branch-edit-guard.py" } ] },
+      { "matcher": "Bash", "hooks": [
+        { "type": "command", "command": "python3 __TARGET__/hooks/git-destructive-blocker.py" },
+        { "type": "command", "command": "python3 __TARGET__/hooks/pr-base-checker.py" },
+        { "type": "command", "command": "python3 __TARGET__/hooks/commit-msg-convention.py" }
+      ] }
+    ]
+  },
+  "enabledPlugins": {
+    "github@claude-plugins-official": true,
+    "commit-commands@claude-plugins-official": true,
+    "pr-review-toolkit@claude-plugins-official": true,
+    "security-guidance@claude-plugins-official": true,
+    "frontend-design@claude-plugins-official": true
+  },
+  "extraKnownMarketplaces": {
+    "claude-code-plugins": { "source": { "source": "github", "repo": "anthropics/claude-code" } }
+  }
+}
