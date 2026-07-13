@@ -22,25 +22,45 @@
 
 ## 導入先は「1つのプロジェクト」だけ（`~/.claude` には絶対にインストールしない）
 
-このパックは `kind="project"` で、**明示的に指定した1プロジェクトの `.claude/` 配下**にのみインストールする。`--project /abs/path` の指定が必須で、`~/.claude` をターゲットにすることはできない（core foundation とは別の配布経路）。
+このパックは `kind="project"` で、**1プロジェクトの `.claude/` 配下**にのみインストールする。対象プロジェクトへ `cd` して実行すればそのディレクトリの `.claude/` が対象になり、`--project /abs/path` で明示指定もできる。どちらの場合も `~/.claude`（グローバル）をターゲットにすることはできない（core foundation とは別の配布経路）。
 
 ```bash
 python3 install.py install --project /abs/path/to/your-project
 ```
 
-> **省略形:** 対象プロジェクトへ `cd` してから `--project` なしで実行すると、カレントディレクトリ（`./.claude`）を対象にインストールする。foundation リポジトリ自身の中で実行した場合は拒否される。`~/.zshrc` の `claude-eng` 関数（`cd 対象プロジェクト && claude-eng`）を使うのが推奨形で、`claude-eng install` / `claude-eng install --dry-run` / `claude-eng update` のようにサブコマンド・フラグはそのまま転送される。明示的な `--project /abs/path` 指定も従来どおり有効。action 動詞（`install`/`update`/`uninstall`/`verify`）は必須で、`claude-eng` を動詞なしで実行すると usage を表示して終了するだけで、インストールは行われない。
+### エイリアス設定（推奨）
 
-## コマンド
+毎回フルパスを打たずに済むよう、`~/.zshrc` に次の関数を追加して `source ~/.zshrc`（または新しいターミナル）で有効化する:
+
+```bash
+# 対象プロジェクトへ cd してから実行する
+claude-eng()  { python3 "$HOME/dotfiles/claude-engineering/install.py" "$@"; }
+```
+
+以降は対象プロジェクトで動詞付きに実行するだけでよい:
+
+```bash
+cd /path/to/your-project
+claude-eng install
+```
+
+- `--project`/`--target` を省略するとカレントディレクトリ（`./.claude`）が対象。foundation リポジトリ自身の中で実行した場合は拒否される（`cd` 先を間違えたときの保護）。
+- action 動詞（`install`/`update`/`uninstall`/`verify`）は必須。動詞なしで実行すると usage を表示するだけでインストールしない。
+- `--dry-run`・`--force`・`--project /abs/path` などのフラグ・オプションはそのまま透過する。
+
+## コマンド一覧
+
+エイリアス（`claude-eng`）を設定済みなら、対象プロジェクトで:
 
 | 操作 | コマンド | 内容 |
 |---|---|---|
-| dry-run | `python3 install.py install --project /abs/path --dry-run` | 何も書き込まず、NEW/UPDATE/REMOVE_STALE の計画だけを表示する |
-| install | `python3 install.py install --project /abs/path` | 初回導入。既存の管理外ファイルと衝突する場合は中断する（`--force` で退避の上上書き） |
-| update | `python3 install.py update --project /abs/path` | 差分のみ更新。ローカルで手を入れたファイルがあれば中断する（`--force` で退避の上上書き） |
-| verify | `python3 install.py verify --project /abs/path` | 何も書き込まず、導入済みファイルが改変されていないか照合する |
-| uninstall | `python3 install.py uninstall --project /abs/path` | 本パックが導入したファイルのみを削除する（ユーザーの他ファイルやローカル改変ファイルは残す。`--force` で改変ファイルも削除） |
+| install | `claude-eng install` | 初回導入。既存の管理外ファイルと衝突する場合は中断する（`--force` で退避の上上書き） |
+| dry-run | `claude-eng install --dry-run` | 何も書き込まず、NEW/UPDATE/REMOVE_STALE の計画だけを表示する |
+| update | `claude-eng update` | 差分のみ更新。ローカルで手を入れたファイルがあれば中断する（`--force` で退避の上上書き） |
+| verify | `claude-eng verify` | 何も書き込まず、導入済みファイルが改変されていないか照合する |
+| uninstall | `claude-eng uninstall` | 本パックが導入したファイルのみを削除する（ユーザーの他ファイルやローカル改変ファイルは残す。`--force` で改変ファイルも削除） |
 
-`--target /abs/path` で `.claude` そのものではない任意のディレクトリを直接指定することもできる（主にテスト用）。
+エイリアス未設定なら、同じ動詞を `python3 /path/to/claude-engineering/install.py <動詞>` に渡す。`--target /abs/path` で `.claude` そのものではない任意のディレクトリを直接指定することもできる（主にテスト用）。
 
 ## クロスドメイン拒否
 
