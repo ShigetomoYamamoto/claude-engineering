@@ -16,8 +16,9 @@ description: 曖昧な要望を構造化された要件に整理します。requ
 
 要件確定後: `/design`(設計が必要な場合)または `/plan`(既存設計の範囲内)。
 
-承認された要件は `docs/requirements.md` に永続化される(セッションを跨いで残す正本。書き込みは思考ティアが
-`opus-execution-guard` でブロックされるため executor へ委譲する — 詳細は agent 本体「Persist on Approval」)。
+承認された要件は `docs/requirements.md` に永続化される(セッションを跨いで残す正本。書き込みはメインが思考ティア
+(Opus/Fable)へエスカレーション中は `opus-execution-guard` でブロックされるため executor へ委譲する — 詳細は
+agent 本体「Persist on Approval」)。
 
 ## 関連エージェント
 
