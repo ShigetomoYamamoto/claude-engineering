@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """PreToolUse(Edit|Write|MultiEdit): 保護されたブランチ上でのファイル編集をブロックする。
-develop ブランチが存在する（= git-flow 運用中）プロジェクトのみ対象。
+main/master は常に保護対象。develop 等の git-flow ブランチは、それらが実際に存在する
+（= git-flow 運用中と検出された）プロジェクトのみ追加で保護対象とする。
 
 判定は cwd ではなく編集対象 file_path の所在で行う。cwd が保護ブランチのリポでも、
 file_path がそのリポ外（git 管理外ファイルや別 worktree）であれば無関係なので許可
@@ -8,18 +9,14 @@ file_path がそのリポ外（git 管理外ファイルや別 worktree）であ
 する（fail-safe）。"""
 import json, sys, re, subprocess, os
 
-PROTECTED = (
-    'main', 'master',           # GitHub/Git デフォルトブランチ
-    'develop', 'development',   # Git Flow 開発ブランチ
-    'staging',                  # ステージング環境
-    'release',                  # リリースブランチ
-    'production', 'prod',       # 本番環境
-    'trunk',                    # Trunk-based development
-)
+# main/master は SECONDARY の存在有無に関わらず常に保護対象（trunk-based / git-flow を
+# 問わない）。develop 等は、実際にそのブランチ名が存在する（= git-flow 運用中と検出
+# された）場合のみ追加で保護対象とする。
+ALWAYS_PROTECTED = {'main', 'master'}
 
-# main/master 以外の protected branch が存在する場合のみ
-# マルチブランチ運用中と判断してブロックする
 SECONDARY = {'develop', 'development', 'staging', 'release', 'production', 'prod', 'trunk'}
+
+PROTECTED = ALWAYS_PROTECTED | SECONDARY
 
 
 def run_git(args, dir_path):
@@ -60,13 +57,17 @@ except Exception:
 if current not in PROTECTED:
     sys.exit(0)
 
-try:
-    all_r = run_git(['branch', '-a'], target_dir)
-    existing = set(re.findall(r'\b\w+\b', all_r.stdout))
-    if not (SECONDARY & existing):
+# main/master はここで無条件に保護対象として扱いを続ける（下の SECONDARY 存在
+# チェックをスキップする）。develop 等はこれまで通り、実際に SECONDARY ブランチが
+# 存在する場合のみ保護対象とする。
+if current not in ALWAYS_PROTECTED:
+    try:
+        all_r = run_git(['branch', '-a'], target_dir)
+        existing = set(re.findall(r'\b\w+\b', all_r.stdout))
+        if not (SECONDARY & existing):
+            sys.exit(0)
+    except Exception:
         sys.exit(0)
-except Exception:
-    sys.exit(0)
 
 print(f'🔴 保護されたブランチ "{current}" 上でファイルを編集しようとしています。')
 print(f'  対象ファイル: {file_path}')
