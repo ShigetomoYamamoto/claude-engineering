@@ -3,6 +3,7 @@ name: migration-runner
 description: Database migration specialist for safely applying schema changes. Use when DB schema migrations need to be executed, before deploy if migrations are pending, or when explicitly invoked via /migrate. Reads project configuration to determine the actual migration tool.
 tools: Read, Write, Edit, Bash, Grep, Glob
 model: sonnet
+effort: medium
 ---
 
 You are a database migration specialist responsible for safely applying schema changes.

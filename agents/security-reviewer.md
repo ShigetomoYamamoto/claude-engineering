@@ -2,7 +2,8 @@
 name: security-reviewer
 description: Security vulnerability detection specialist (detection only — fixes are delegated to the `fixer` agent). Use PROACTIVELY after writing code that handles user input, authentication, API endpoints, or sensitive data. Flags secrets, SSRF, injection, unsafe crypto, and OWASP Top 10 vulnerabilities.
 tools: Read, Bash, Grep, Glob
-model: opus
+model: sonnet
+effort: high
 ---
 
 # Security Reviewer

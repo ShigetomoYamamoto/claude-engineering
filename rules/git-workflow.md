@@ -39,4 +39,4 @@ Format details (Conventional Commits type table / branch naming conventions / PR
 - **ブランチ作成** → 自作 `/create-branch`（develop 起点＋命名規約。公式に同等品なし）。
 - **PR 作成** → 自作 `/create-pr`（develop ベース＋テンプレ＋承認）。公式 `/commit-commands:commit-push-pr` は `--base` を指定せず `pr-base-checker.py`（develop 強制）に弾かれ、かつ無確認 push/PR になるため採用しない。
 - 上記すべてに対し、保護ブランチへの commit/push と非 develop への PR は hooks が決定的にブロックする（どのコマンド経由でも有効）。
-- **自走/委譲時に main-loop Opus が VCS を直接実行できない場合(opus-execution-guard)** → `git-runner` サブエージェント(Sonnet)へ委譲。規約は hooks が担保し、コマンドの正(`/create-branch`・`/create-pr`・`/commit-commands:commit`)は不変。
+- **自走/委譲時にメインが思考ティア(Opus/Fable)へエスカレーション中で VCS を直接実行できない場合(opus-execution-guard)** → `git-runner` サブエージェント(Sonnet)へ委譲。規約は hooks が担保し、コマンドの正(`/create-branch`・`/create-pr`・`/commit-commands:commit`)は不変。

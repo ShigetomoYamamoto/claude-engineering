@@ -3,6 +3,7 @@ name: build-error-resolver
 description: Build and compilation error resolution specialist. Use PROACTIVELY when build fails or type/compile errors occur. Fixes build errors only with minimal diffs, no architectural edits. Focuses on getting the build green quickly.
 tools: Read, Write, Edit, Bash, Grep, Glob
 model: sonnet
+effort: high
 ---
 
 # Build Error Resolver
