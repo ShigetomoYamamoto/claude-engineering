@@ -133,8 +133,12 @@ survives the session — it is the project's requirements-of-record, not just a 
 
 - **Where**: `docs/requirements.md` (or `docs/requirements-<name>.md` for a scoped feature).
   If the project's CLAUDE.md already declares a canonical requirements file, write to that path.
-- **Who writes**: this agent has no Write tool, so the **orchestrator delegates the write to the
-  `executor` agent** (Sonnet) — the thinking-tier main loop is blocked by `opus-execution-guard`
+- **Who writes**: this agent has no Write tool (read-only by design, mirroring
+  `architect`/`planner`/`task-analyst`), so it never persists the file itself — the
+  **orchestrator** does. The orchestrator writes it **directly** when it is the
+  Sonnet main loop (the default; passes `opus-execution-guard`). It delegates to the
+  **`executor` agent** (Sonnet) only when it is currently escalated to a thinking-tier
+  model (Opus/Fable) and is therefore blocked from writing itself
   (`rules/role-separation.md`). Same pattern as memory-dream and the VISION save.
 - **Overwrite**: if the target file already exists, show the diff and confirm before overwriting
   (mirrors `skills/loop-engineering/SKILL.md` STEP2's VISION save).
