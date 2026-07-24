@@ -99,6 +99,29 @@ Create detailed steps with:
 - [ ] Criterion 2
 ```
 
+## Persist the Plan
+
+Persist the finalized `Implementation Plan` so it survives the session — it is the
+project's plan-of-record, not just a chat artifact:
+
+- **Where**: `docs/plan.md` (or `docs/plan-<name>.md` for a scoped feature/refactor). If
+  the project's CLAUDE.md already declares a canonical plan file, write to that path.
+- **When**: unlike `requirements-analyst`/`architect`, the `plan` stage is **`auto`, not
+  a gate** (`docs/autorun-flow.md` — the machine-checkable condition is "the plan has
+  file paths and ordered steps", not a human approval). Persist as soon as the plan is
+  finalized; do not block on an approval this stage doesn't require. In interactive
+  (non-`/autorun`) use, if the user is still iterating on the plan in conversation,
+  persist the version they last settled on, not an earlier draft.
+- **Who writes**: this agent has no Write tool (read-only by design, mirroring
+  `requirements-analyst`/`architect`/`task-analyst`), so it never persists the file
+  itself — the **orchestrator** does. The orchestrator writes it **directly** when it is
+  the Sonnet main loop (the default; passes `opus-execution-guard`). It delegates to the
+  **`executor` agent** (Sonnet) only when it is currently escalated to a thinking-tier
+  model (Opus/Fable) and is therefore blocked from writing itself
+  (`rules/role-separation.md`). Same pattern as `requirements-analyst`'s persist step.
+- **Overwrite**: if the target file already exists, show the diff and confirm before
+  overwriting (mirrors `skills/loop-engineering/SKILL.md` STEP2's VISION save).
+
 ## Best Practices
 
 1. **Be Specific**: Use exact file paths, function names, variable names
