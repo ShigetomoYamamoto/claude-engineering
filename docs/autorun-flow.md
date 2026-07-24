@@ -145,6 +145,13 @@ Besides the in-context seed, the **approved requirements are persisted to `docs/
 full-auto run on a fresh project still leaves a durable requirements-of-record, not only an
 in-context artifact. See `agents/requirements-analyst.md` "Persist on Approval".
 
+The same durability applies downstream: the **approved design is persisted to `docs/design.md`**
+once the design gate clears (`agents/architect.md` "Persist on Approval"), and the **finalized
+plan is persisted to `docs/plan.md`** as soon as it's produced — `plan` is `auto`, not a gate
+(above), so this persists on finalization rather than on approval (`agents/planner.md` "Persist
+the Plan"). Same write-delegation pattern as requirements: the orchestrator writes directly as
+the Sonnet main loop, or delegates to `executor` only while escalated.
+
 ## Mechanical verifiability check (at startup)
 
 At `/autorun` startup, detect via Bash whether every auto phase's success_test is

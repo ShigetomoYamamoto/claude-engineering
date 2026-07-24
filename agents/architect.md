@@ -81,6 +81,26 @@ output `design: not-needed` when none holds and let the caller auto-advance to
 
 See `docs/autorun-flow.md` "design skip decision" and ADR-014 (gates are derived, not placed).
 
+## Persist on Approval
+
+Once the user approves the design (the human gate above), persist the approved design
+proposal so it survives the session — it is the project's design-of-record, not just a
+chat artifact:
+
+- **Where**: `docs/design.md` (or `docs/design-<name>.md` for a scoped feature). If the
+  project's CLAUDE.md already declares a canonical design file, write to that path.
+  Significant individual decisions still get their own ADR under `docs/adr/` as described
+  below — this persists the overall design proposal, it does not replace ADRs.
+- **Who writes**: this agent has no Write tool (read-only by design, mirroring
+  `requirements-analyst`/`planner`/`task-analyst`), so it never persists the file itself —
+  the **orchestrator** does. The orchestrator writes it **directly** when it is the
+  Sonnet main loop (the default; passes `opus-execution-guard`). It delegates to the
+  **`executor` agent** (Sonnet) only when it is currently escalated to a thinking-tier
+  model (Opus/Fable) and is therefore blocked from writing itself
+  (`rules/role-separation.md`). Same pattern as `requirements-analyst`'s persist step.
+- **Overwrite**: if the target file already exists, show the diff and confirm before
+  overwriting (mirrors `skills/loop-engineering/SKILL.md` STEP2's VISION save).
+
 ## Architectural Principles
 
 ### 1. Modularity & Separation of Concerns
