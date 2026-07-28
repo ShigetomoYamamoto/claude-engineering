@@ -94,10 +94,12 @@ first**, then stop and report. Never silently continue past a ceiling.
 ## Single entry, single judge
 
 - **Scope / size is judged once, at the entry, from investigation** — not re-judged
-  downstream. When a higher layer has already decided scope (e.g. `/autorun` ran
-  analysis/planning before delegating the code rung to `skills/loop-engineering`),
-  the lower layer ADOPTS that decision and does NOT re-run its own sizing. Two judges
-  of the same thing can disagree — collapse them to one (see [ADR-014](../docs/adr/014-loop-engineering-as-discipline.md)).
+  downstream. `/autorun` is the single entry for any code build/fix/change request and
+  judges sizing (A/B/C) once at its own Sizing step before delegating the code rung to
+  `agents/tdd-guide.md` (or `workflows/large-scope-execute.js` for A-大); the lower
+  layer ADOPTS that decision and does NOT re-run its own sizing. Two judges of the same
+  thing can disagree — collapse them to one (see [ADR-014](../docs/adr/014-loop-engineering-as-discipline.md)
+  and ADR-025).
 - **Gates are derived, not placed** — a boundary is a human gate IFF its done-condition
   is not machine-checkable (a direction judgment) or its action is irreversible. The
   four `/autorun` gates (requirements / design / PR / deploy) are the *consequence* of

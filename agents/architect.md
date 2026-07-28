@@ -99,7 +99,7 @@ chat artifact:
   model (Opus/Fable) and is therefore blocked from writing itself
   (`rules/role-separation.md`). Same pattern as `requirements-analyst`'s persist step.
 - **Overwrite**: if the target file already exists, show the diff and confirm before
-  overwriting (mirrors `skills/loop-engineering/SKILL.md` STEP2's VISION save).
+  overwriting (mirrors `agents/planner.md`'s plan/predicate-table save).
 
 ## Architectural Principles
 
