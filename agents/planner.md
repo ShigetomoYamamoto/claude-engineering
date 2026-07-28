@@ -94,10 +94,32 @@ Create detailed steps with:
 - **Risk**: [Description]
   - Mitigation: [How to address]
 
-## Success Criteria
-- [ ] Criterion 1
-- [ ] Criterion 2
+## Success Criteria (VISION predicate table)
+
+| ID | Tag | Axis | Predicate | Test approach |
+|----|-----|------|-----------|----------------|
+| N1 | 機械 | N | [when <action>, <observable result>] | [file/approach] |
+| E1 | 機械 | E | [invalid input → expected error] | ... |
+| B1 | 機械 | B | [boundary value behavior] | ... |
+| S1 | 機械 | S | [state/persistence across actions] | ... |
 ```
+
+### Success Criteria discipline (this table is the code rung's done-condition)
+
+Every criterion gets a **stable ID** (`N`=normal / `E`=error-exception / `B`=boundary /
+`S`=state-persistence / `Q`=ambiguous-quality, + sequence number), a **verification tag**
+(`機械` = mechanically checkable via test/lint/typecheck — the default; `AI` only when no
+mechanical check is possible — never tag something `AI` that could be `機械`), and an
+**observable predicate** in "when \<action\>, \<result\>" form. Keep internal names
+(store/variable/function names, implementation-specific values) out of the predicate
+itself — put them in "Test approach" instead, so the predicate stays readable to someone
+without codebase context.
+
+Carry the same ID forward from any upstream acceptance criterion
+(`requirements-analyst`/`task-analyst`) through to whichever test proves it — this table
+is not re-derived from scratch when acceptance criteria already exist upstream.
+`agents/tdd-guide.md` **adopts this table directly** as its done-condition; it does not
+author its own.
 
 ## Persist the Plan
 
@@ -120,7 +142,29 @@ project's plan-of-record, not just a chat artifact:
   model (Opus/Fable) and is therefore blocked from writing itself
   (`rules/role-separation.md`). Same pattern as `requirements-analyst`'s persist step.
 - **Overwrite**: if the target file already exists, show the diff and confirm before
-  overwriting (mirrors `skills/loop-engineering/SKILL.md` STEP2's VISION save).
+  overwriting (same convention this file's own predicate-table save follows).
+
+## Large-A Fan-out Sub-mode (`workflows/large-scope-execute.js`)
+
+When a task is too large for one context (multi-file/migration/heavy spec), the
+`large-scope-execute.js` workflow invokes you **in parallel, once per module/chunk**,
+instead of once for the whole task. In this mode your job narrows to **drafting the
+VISION predicate table only** for your assigned module — you are not producing a full
+Implementation Plan:
+
+- **Input**: a single module/chunk scope + the overall goal (not the whole codebase).
+- **Skip Branch Verification (Planning Process step 0)** — the workflow's caller already
+  handled it once before fan-out; running it per parallel worker is redundant.
+- **Skip the full Plan Format** (Overview/Architecture Changes/Implementation Steps/etc.)
+  — output only the conditions relevant to your assigned module, in the schema the
+  workflow requests (id left provisional; the orchestrator renumbers deterministically
+  across all workers afterward — do not worry about ID collisions with sibling workers).
+- Follow the same predicate discipline as the normal Success Criteria table above:
+  ID(provisional)+tag(機械/AI, default 機械)+axis+observable predicate+test approach.
+  Do not invent solutions or write code — this sub-mode is still read-only planning.
+
+This makes you the single author of the predicate table on both paths: the whole-task
+Success Criteria section above for normal-scope work, this fan-out sub-mode for large-A.
 
 ## Best Practices
 

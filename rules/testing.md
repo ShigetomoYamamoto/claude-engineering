@@ -26,12 +26,12 @@ MANDATORY workflow:
 
 ## Agent Support
 
-- **tdd-guide** - Use PROACTIVELY for new features, enforces write-tests-first
+- **tdd-guide** - invoked by the single entry (`/autorun`) as the tdd phase's RED→GREEN worker; enforces write-tests-first
 - **e2e-runner** - Playwright E2E testing specialist
 
 ## Scope note
 
-The sizing judge is `loop-engineering` STEP 0 (ADR-014): class C tasks (trivial /
-throwaway / no testable runtime surface) may skip the TDD loop with an explicit
-one-line notice. The mandate above applies to code changes with observable
-behavior (class A/B).
+The sizing judge is `/autorun`'s entry-level Sizing step (`docs/autorun-flow.md`
+"Sizing"; ADR-014, ADR-025): class C tasks (trivial / throwaway / no testable runtime
+surface) may skip the TDD loop with an explicit one-line notice. The mandate above
+applies to code changes with observable behavior (class A/B).

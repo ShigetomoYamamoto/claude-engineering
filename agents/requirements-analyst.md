@@ -141,7 +141,7 @@ survives the session — it is the project's requirements-of-record, not just a 
   model (Opus/Fable) and is therefore blocked from writing itself
   (`rules/role-separation.md`). Same pattern as memory-dream and the VISION save.
 - **Overwrite**: if the target file already exists, show the diff and confirm before overwriting
-  (mirrors `skills/loop-engineering/SKILL.md` STEP2's VISION save).
+  (mirrors `agents/planner.md`'s plan/predicate-table save).
 
 This durable file complements the in-context handoff (acceptance criteria → VISION seeds,
 `docs/autorun-flow.md` "Requirement → VISION handoff"): the handoff carries the criteria

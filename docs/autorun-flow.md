@@ -23,6 +23,30 @@ rules" below). It adds `vibing` / `design_needed` / `isolation` to RUN_STATE and
 leaves this transition table untouched. Without the flag, behaviour is exactly as
 defined here (ADR-015).
 
+## Sizing (decided once, at this entry — single judge)
+
+`/autorun` is the single proactive entry for any code build/fix/change request,
+explicit (`/autorun ...`) or bare ("実装して"/"直して"/"バグを直して" etc. — see
+`rules/agents.md`). Before entering the phase table, it classifies the request once:
+
+- **C — trivial** (typo/rename/comment/log/formatting/one-line config, or no testable
+  runtime surface): skip the phase table, implement directly, and say so ("ループは省略
+  しました(理由: ...)"). No requirements/design/plan/tdd/verify phases run.
+- **B — mini** (small, well-understood change): declare 1–2 predicates inline, skip
+  straight to a lightweight tdd(`agents/tdd-guide.md`)+verify(`/review-loop`, only if
+  risk/diff size warrants it) pass. requirements/analyze-task/design/plan phases are
+  skipped.
+- **A — full**: run the phase table below. Within A, scope decides execution part for
+  the tdd phase: **A-中小** (1–a few files) runs `agents/tdd-guide.md` inline;
+  **A-大** (multi-file/migration/heavy spec that doesn't fit one context) runs
+  `workflows/large-scope-execute.js` instead (plan→human gate→execute, see that
+  workflow's `meta.whenToUse`).
+
+This sizing call is made **once**, here, and is not re-litigated downstream — the same
+"single entry, single judge" principle as the rest of this table (ADR-014). Whichever
+tier the tdd phase runs at, `agents/tdd-guide.md` and `workflows/large-scope-execute.js`
+adopt the scope/predicates handed to them; they do not re-decide size.
+
 ## Phase transition table
 
 | phase_id | execution part | kind | success_test (decided mechanically) | full-auto next | support next |
@@ -31,7 +55,7 @@ defined here (ADR-015).
 | analyze-task | task-analyst | auto | breakdown + acceptance criteria produced | plan | plan |
 | design | architect | **gate** (skippable) | human approves the design | plan | plan |
 | plan | planner | auto | the plan has file paths and ordered steps | tdd | tdd |
-| tdd | `skills/loop-engineering/` (delegated to the micro layer) | auto | tests/lint/typecheck pass and coverage 80%+ (measured via Bash) | verify | verify |
+| tdd | `agents/tdd-guide.md` (predicates from `agents/planner.md`; `workflows/large-scope-execute.js` when scope is large — see "Sizing") | auto | tests/lint/typecheck pass and coverage 80%+ (measured via Bash) | verify | verify |
 | verify | `/review-loop` (delegated) | auto | reviewer returns NO_ISSUES and mechanical checks pass | commit | commit |
 | commit | `/commit-commands:commit` | auto (※) | code-reviewer CRITICAL/HIGH=0 and secret-detection passes | pr | pr |
 | pr | `/create-pr` | **gate** | remote CI green（機械・CI 実在時）＋ human approves the PR（push/PR via gh） | migrate | (goal) |
@@ -123,22 +147,25 @@ whether design stays a gate. Vibing introduces no new design-skip criterion.
 ## Scope handoff to the tdd phase (single judge)
 
 `/autorun` has already decided scope by the time it reaches `tdd` (requirements /
-analyze-task + plan produced file paths and ordered steps). When it delegates the tdd
-phase to `skills/loop-engineering/`, it passes that scope down in the preamble; the
-skill **adopts it and does NOT re-run its own STEP0 (A/B/C) sizing**. The A/B/C
-judgment is the skill's behavior only in standalone use (no RUN_STATE). This keeps a
-single judge of scope (see `rules/loop-safety.md` "Single entry, single judge" / ADR-014).
+analyze-task + plan produced file paths and ordered steps, and the "Sizing" step above
+already picked A-中小 vs A-大). When it delegates the tdd phase to `agents/tdd-guide.md`
+(or `workflows/large-scope-execute.js` for A-大), it passes that scope down in the
+preamble; the phase's execution part **adopts it and does not re-decide size** — the
+A/B/C judgment happens exactly once, at the "Sizing" step above. This keeps a single
+judge of scope (see `rules/loop-safety.md` "Single entry, single judge" / ADR-014).
 
 ## Requirement → VISION handoff (closing the loop top-to-bottom)
 
-The done-condition of the code rung (loop-engineering's VISION) is not invented from
+The done-condition of the code rung (the VISION predicate table) is not invented from
 scratch under `/autorun`. The **acceptance criteria** produced at the requirements rung
 (`requirements-analyst`) or analyze-task rung (`task-analyst`) — which those agents must
-make *testable* — flow down through `plan` and become the **seed of the VISION predicates**
-at the tdd phase (one acceptance criterion → one machine-checkable VISION predicate, carried
-with a stable ID). This keeps the loop closed top-to-bottom: the thing the human approved at
-the gate is the same thing the machine checks at the bottom. loop-engineering adopts these
-rather than re-eliciting them (see `skills/loop-engineering/SKILL.md` STEP2; ADR-014).
+make *testable* — flow down through `plan`, where **`agents/planner.md` formalizes them
+into the ID+tag+axis predicate table** (its `Success Criteria` section — see
+`agents/planner.md` "Success Criteria discipline"; the same table is drafted per-module
+via planner's large-A fan-out sub-mode when `workflows/large-scope-execute.js` is used).
+This keeps the loop closed top-to-bottom: the thing the human approved at the gate is the
+same thing the machine checks at the bottom. `agents/tdd-guide.md` **adopts this table
+directly** rather than re-eliciting or re-authoring it (see ADR-014).
 
 Besides the in-context seed, the **approved requirements are persisted to `docs/requirements.md`**
 (the orchestrator delegates the write to `executor`; requirements-analyst has no Write tool) so a
@@ -196,7 +223,7 @@ therefore deliberately outside this flow and its stop-whitelist — not a missin
 
 ## Hard stop (two-layer)
 
-- **Per-phase budget**: verify=5 rounds, tdd=the micro layer (loop-engineering) internal cap. Per-phase default.
+- **Per-phase budget**: verify=5 rounds, tdd=`agents/tdd-guide.md`'s internal RED→GREEN attempt cap (or `workflows/large-scope-execute.js`'s own per-mode structure for A-大). Per-phase default.
 - **Whole-run budget**: a total transition-count cap + the session ceiling in `rules/loop-safety.md` (default 20 turns / 30 min). The per-phase and whole-run budgets are independent; whichever is hit first stops the run.
 - **vibing transition cap**: because vibing connects to the goal without human gate waits, only the *transition-count* cap is raised — full-auto=24 / support=14. The session ceiling (20 turns / 30 min) and per-phase budgets are **unchanged**. In practice the time ceiling often fires before the transition cap — that is invariant 3 (bounded) working, not a removed limit (ADR-015).
 
@@ -214,4 +241,4 @@ values here take effect only in an autonomous run (where RUN_STATE is declared).
 - `docs/adr/008-orchestration-declarative-flow.md` — the declarative-flow decision and commit blanket approval
 - `docs/adr/015-vibing-mode.md` — the `--vibing` flag and the gate-demotion (`resolve_kind`) decision
 - `docs/adr/018-remote-ci-as-done-condition.md` — remote CI green as the machine success_test component of `pr` (invariant 1; not demoted by vibing)
-- `skills/loop-engineering/SKILL.md` — the tdd phase's execution part (micro layer)
+- `agents/tdd-guide.md` — the tdd phase's execution part (RED→GREEN); `agents/planner.md` — the predicate table's author; `workflows/large-scope-execute.js` — the A-大 execution path

@@ -1,13 +1,13 @@
 export const meta = {
-  name: 'loop-engineering-large-A',
+  name: 'large-scope-execute',
   description:
-    '大規模フルA向け orchestration。mode:"plan" は読取専用 Plan を fan-out して VISION 条件を起草し抜け漏れを批評する。mode:"execute" は 赤確認(RedGate)→モジュール毎の最小実装(逐次)→verify を回す。レビュー往復は含めず /review-loop に委譲する。',
+    '大規模スコープ向け orchestration(autorun の tdd 相当フェーズ、または単体起動時にコード規模が大きい場合の実行部品)。mode:"plan" は読取専用 planner を fan-out して VISION 条件を起草し抜け漏れを批評する。mode:"execute" は 赤確認(RedGate)→モジュール毎の最小実装(逐次、tdd-guide)→verify を回す。レビュー往復は含めず /review-loop に委譲する。',
   whenToUse:
-    'loop-engineering のフルA のうち、多ファイル/移行/仕様が重く 1 コンテキストに載らない規模のときだけ。まず {mode:"plan", goal, scope} で VISION 草案を得て人間が承認し赤テストを書く → {mode:"execute", vision:<承認版>, scope, verifyCmd} で実装〜検証。scope は配列(例 ["src/foo.ts"])。カンマ区切り文字列も配列化して受理する。中小規模はこの workflow を使わずメイン会話でインライン(skill STEP1〜6)。',
+    'コードを書く/直す依頼のうち、多ファイル/移行/仕様が重く 1 コンテキストに載らない規模のときだけ(サイジングは autorun の入口、または単体起動時は呼び出し側が判断)。まず {mode:"plan", goal, scope} で VISION 草案を得て人間が承認し赤テストを書く → {mode:"execute", vision:<承認版>, scope, verifyCmd} で実装〜検証。scope は配列(例 ["src/foo.ts"])。カンマ区切り文字列も配列化して受理する。中小規模はこの workflow を使わず tdd-guide に直接委任する。',
   phases: [
-    { title: 'Plan', detail: 'Plan エージェントを fan-out して VISION 条件を起草し完全性を批評' },
+    { title: 'Plan', detail: 'planner(fan-outサブモード)を並列起動して VISION 条件を起草し完全性を批評' },
     { title: 'RedGate', detail: '各[機械]条件のテストが赤であることを確認(赤が無ければ中止)' },
-    { title: 'Implement', detail: 'モジュール毎に fixer が最小実装で赤→緑(VISIONの穴は戻りチャネルで停止)' },
+    { title: 'Implement', detail: 'モジュール毎に tdd-guide が最小実装で赤→緑(VISIONの穴は戻りチャネルで停止)' },
     { title: 'Verify', detail: 'verifyCmd を実行し exit と VISION[機械]条件の緑を ID 照合' },
   ],
 }
@@ -158,7 +158,7 @@ if (mode === 'plan') {
   const drafts = await parallel(
     chunks.map((c, i) => () =>
       agent(
-        `あなたは loop-engineering の PM ロール(計画専任・読取専用・実装禁止)。\n` +
+        `あなたは planner(large-A fan-outサブモード・計画専任・読取専用・実装禁止)。\n` +
           `ゴール: ${goal}\n担当範囲: ${typeof c === 'string' ? c : JSON.stringify(c)}\n重点(FOCUS): ${focus}\n\n` +
           `★自分の担当範囲に直接関係する合格条件だけを「○○すると△△になる」の観測可能な述語で列挙せよ` +
           `(他範囲と汎用的に被るだけの条件は出さない)。\n` +
@@ -172,7 +172,7 @@ if (mode === 'plan') {
         {
           label: `plan:${typeof c === 'string' ? c.slice(0, 24) : i}`,
           phase: 'Plan',
-          agentType: 'Plan',
+          agentType: 'planner',
           schema: VISION_DRAFT_SCHEMA,
         }
       )
@@ -209,7 +209,7 @@ if (mode === 'plan') {
       `※ ID は付けなくてよい(オーケストレータが axis ごとに振り直す)。\n\n` +
       `入力条件(${rawCount}個):\n${JSON.stringify(slim, null, 2)}\n\n` +
       `統合後の最終条件リストを conditions に返せ。`,
-    { label: 'plan:consolidate', phase: 'Plan', agentType: 'Plan', schema: VISION_DRAFT_SCHEMA }
+    { label: 'plan:consolidate', phase: 'Plan', agentType: 'planner', schema: VISION_DRAFT_SCHEMA }
   )
   // 統合が失敗(null/空)したら raw にフォールバックしてでも、ID だけは決定的に振り直して一意化する
   const finalConds = renumber((consolidated && consolidated.conditions && consolidated.conditions.length)
@@ -329,11 +329,13 @@ for (let i = 0; i < units.length; i++) {
   const u = units[i]
   if (!u.conds.length) continue // 被覆検証済みなので通常は起きない(防御)
   const r = await agent(
-    `あなたは実装担当(fixer / maker)。承認済み VISION の[機械]条件を「赤→緑」にする最小実装を書け。\n` +
+    `あなたは tdd-guide(RED→GREEN実行担当・maker)。承認済み VISION の[機械]条件を「赤→緑」にせよ` +
+      `(あなた自身のRED→GREEN手法・エッジケース網羅をそのまま適用してよい。ここでの追加ルールは` +
+      `このworkflow固有のスコープ限定と戻りチャネルだけ)。\n` +
       `対象: ${u.target}\nFOCUS: ${focus}\n` +
       `担当条件:\n${JSON.stringify(u.conds, null, 2)}\n\n` +
       `ルール:\n` +
-      `- 担当条件だけ実装する。変更は最小限。レッド→グリーン。\n` +
+      `- 担当条件だけ実装する。変更は最小限。\n` +
       `- テストは消さない・条件は削らない・緑にするための嘘実装(固定値返し等)をしない。\n` +
       `- ★戻りチャネル: 実装中に「VISION の述語自体が曖昧/矛盾/穴がある」と判明したら、推測で埋めず ` +
       `status="needs_vision_revision"、conditionId に対象条件 ID、visionHole に理由を入れて即座に返す(独断で VISION を解釈・補修しない)。\n` +
@@ -341,7 +343,7 @@ for (let i = 0; i < units.length; i++) {
     {
       label: `impl:${u.label.slice(0, 24)}`,
       phase: 'Implement',
-      agentType: 'fixer',
+      agentType: 'tdd-guide',
       schema: IMPLEMENT_SCHEMA,
     }
   )
@@ -353,7 +355,7 @@ for (let i = 0; i < units.length; i++) {
       mode: 'execute',
       status: 'impl_error',
       reason:
-        '実装担当(fixer)が結果を返しませんでした(エージェント失敗/スキュー)。当該ユニットを再実行せよ。' +
+        '実装担当(tdd-guide)が結果を返しませんでした(エージェント失敗/スキュー)。当該ユニットを再実行せよ。' +
         'verify_failed とは別物(実装が走っていない)。',
       module: u.label,
       doneSoFar: implResults.filter(Boolean),
@@ -365,7 +367,7 @@ for (let i = 0; i < units.length; i++) {
       mode: 'execute',
       status: 'needs_vision_revision',
       reason:
-        '実装中に VISION の穴が判明(戻りチャネル)。fixer は推測で埋めず停止した。visionHole を確認し承認ゲートに戻って VISION を補修してから再実行せよ。',
+        '実装中に VISION の穴が判明(戻りチャネル)。tdd-guide は推測で埋めず停止した。visionHole を確認し承認ゲートに戻って VISION を補修してから再実行せよ。',
       conditionId: r.conditionId,
       module: r.module,
       visionHole: r.visionHole,
@@ -417,7 +419,8 @@ return {
   conditions: verify.perCondition || [],
   changedFiles,
   nextStep: allGreen
-    ? `execute 緑。次はメイン会話で /review-loop(SCOPE=変更ファイル, FOCUS=${focus})を NO_ISSUES まで回す。` +
-      `その後 skill STEP6 で verify を再実行し、VISION 全[機械]条件の緑を ID 照合して完了判定。レビュー往復はこの workflow に入れない(委譲する)。`
-    : 'verify が exit≠0 か未緑条件あり。skill STEP4 に戻って修正せよ。緑になるまでレビューには進まない。完了条件は緩めない(テスト削除・条件削減・嘘実装は禁止)。',
+    ? `execute 緑。次はメイン会話で /review-loop(SCOPE=変更ファイル, FOCUS=${focus})を NO_ISSUES まで回す` +
+      `(autorun 配下なら verify フェーズが担う)。その後 verifyCmd を再実行し、VISION 全[機械]条件の緑を ID 照合して完了判定。` +
+      `レビュー往復はこの workflow に入れない(委譲する)。`
+    : 'verify が exit≠0 か未緑条件あり。tdd-guide に戻して修正せよ。緑になるまでレビューには進まない。完了条件は緩めない(テスト削除・条件削減・嘘実装は禁止)。',
 }
