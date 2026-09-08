@@ -136,11 +136,12 @@ project's plan-of-record, not just a chat artifact:
   persist the version they last settled on, not an earlier draft.
 - **Who writes**: this agent has no Write tool (read-only by design, mirroring
   `requirements-analyst`/`architect`/`task-analyst`), so it never persists the file
-  itself — the **orchestrator** does. The orchestrator writes it **directly** when it is
-  the Sonnet main loop (the default; passes `opus-execution-guard`). It delegates to the
-  **`executor` agent** (Sonnet) only when it is currently escalated to a thinking-tier
-  model (Opus/Fable) and is therefore blocked from writing itself
-  (`rules/role-separation.md`). Same pattern as `requirements-analyst`'s persist step.
+  itself — the **orchestrator** arranges it. The orchestrator does not write it directly
+  either: `main-loop-execution-guard` blocks the main loop from writing **on every
+  model**, not only the thinking tier (ADR-026 / ADR-027). It **always delegates the
+  persist step to the `executor` agent** (Sonnet), passing `run_in_background: false` so
+  the run waits for the write to finish (`rules/role-separation.md`). Same pattern as
+  `requirements-analyst`'s persist step.
 - **Overwrite**: if the target file already exists, show the diff and confirm before
   overwriting (same convention this file's own predicate-table save follows).
 
