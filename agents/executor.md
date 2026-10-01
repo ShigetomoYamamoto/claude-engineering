@@ -35,6 +35,10 @@ This boundary is the whole point of this agent: it keeps execution from collapsi
 3. If a verification command exists, run it via Bash and confirm exit 0.
 4. Self-review the diff.
 
+## Issue progress label
+
+When you begin implementing work tied to an Issue, replace its `progress:` label with `progress: implementing` (one label at a time). Scope, exceptions, and the full transition table are in `rules/git-workflow.md` ("Issue Progress Labels"); follow them — including skipping and reporting when the label does not exist.
+
 ## Prohibited
 
 - Changes beyond the instruction (resist refactoring urges).

@@ -26,6 +26,23 @@ These rules apply whenever any agent performs git operations — not just when `
   develop-base rule, and it applies solely to vibing; normal usage and plain `/autorun`
   keep `develop` as base unchanged.
 
+### Issue Progress Labels
+- **Declare Issue progress with a label; never guess it.** `workops progress estimate` reads the `progress:` label as its primary progress signal.
+- Labels and meaning:
+  - No label = not started (falls back to the status-based estimate)
+  - `progress: started` = work begun (a working branch was created) → 25%
+  - `progress: implementing` = implementation in progress → 50%
+  - `progress: review` = PR opened, awaiting review → 80%
+- **Exactly one at a time.** When adding the next label, remove the previous one.
+- Transitions — the agent that performs the step moves the label:
+  - Created a working branch for the Issue → add `progress: started`
+  - Began implementation → replace with `progress: implementing`
+  - Opened a PR that closes the Issue → replace with `progress: review`
+  - PR merged → remove every `progress:` label (the Issue closes automatically via `Closes #N`)
+  - Work interrupted or put on hold → remove every `progress:` label
+- **Scope: `ShigetomoYamamoto/*` repositories only.** Never create or apply these labels in `crien-inc/*` (labels are visible to everyone in an organization repository, and the team has not yet agreed to this convention).
+- If the target repository does not have the label, skip that step and report it. Do not create the label as part of this procedure.
+
 ---
 
 ## Reference

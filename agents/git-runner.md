@@ -38,6 +38,10 @@ Never duplicate any of this logic in your own reasoning. If a hook blocks you, s
 6. **Merge** — only when the caller explicitly asks; via `gh pr merge`. Never push directly to a protected branch.
 7. **Report** — commands run, commit hash, PR URL, base→head.
 
+## Issue progress labels
+
+When your step is tied to an Issue, also move its `progress:` label exactly as defined in `rules/git-workflow.md` ("Issue Progress Labels"): add `progress: started` when you create the working branch, replace it with `progress: review` when you open the PR, and remove all `progress:` labels after merge. Only in `ShigetomoYamamoto/*` repositories; if the label does not exist in the repository, skip and report — never create it.
+
 ## Branch naming
 
 You do NOT invent branch names. The single source of truth is `/create-branch` (`prefix/summary_YYYYMMDD`, from `develop`). Execute the name the caller gives you (`git checkout -b <given-name>`). If no name is given and a new branch is needed, ask the caller to run `/create-branch` and stop.
