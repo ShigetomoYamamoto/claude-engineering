@@ -23,7 +23,8 @@ Design summary
 - Every write/delete is boundary-checked: the resolved path must be inside
   the resolved target directory, or the operation refuses to proceed.
 - `settings.json` is never blindly overwritten. Only the fragment's own keys
-  are merged in (see `_merge_settings_dict`), a live key is never deleted,
+  are merged in (see `_merge_settings_dict`), a live key is never deleted
+  (PreToolUse/PostToolUse swap only this pack's own hooks, ADR-031),
   and the file is backed up first.
 """
 
@@ -31,14 +32,17 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import difflib
 import json
+import os
+import shlex
 import shutil
 import subprocess
 import sys
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Dict, Iterable, List, Optional
 
 # ---------------------------------------------------------------------------
 # Plan action labels
@@ -188,6 +192,9 @@ def discover_managed_files(pack: Pack) -> Dict[str, Path]:
                 if not p.is_file():
                     continue
                 rel = p.relative_to(pack.repo_root).as_posix()
+                # Bytecode is a build by-product (gitignored), never shipped.
+                if "__pycache__" in p.relative_to(pack.repo_root).parts or p.suffix == ".pyc":
+                    continue
                 if fragment_rel and rel == fragment_rel:
                     continue
                 result[rel] = p
@@ -423,10 +430,53 @@ def _prune_empty_dirs(pack: Pack, target: Path) -> None:
 # ---------------------------------------------------------------------------
 
 _PER_KEY_UNION_KEYS = ("env", "enabledPlugins", "extraKnownMarketplaces")
+# PreToolUse / PostToolUse are "forced": the fragment's groups always win and
+# propagate to every machine. But only hooks OWNED by this pack are swapped
+# out of the live array; hooks added by other tools (e.g. Orca) are kept
+# (ADR-031, which narrows the whole-array replacement of ADR-009).
+# A hook is owned when its command runs a file this pack ships now or shipped
+# in the previous manifest (so renamed/removed hooks are still cleaned up).
 _FORCE_HOOK_EVENTS = ("PreToolUse", "PostToolUse")
 
 
-def _merge_settings_dict(live: dict, fragment: dict) -> dict:
+def _hook_is_owned(hook: object, owned_paths: Iterable[str]) -> bool:
+    """True if `hook` is a command hook with a shell token equal to an owned
+    path. Exact token equality (no substring match). Unparseable or non-command
+    hooks are not owned, so they are kept."""
+    if not isinstance(hook, dict):
+        return False
+    command = hook.get("command")
+    if not isinstance(command, str):
+        return False
+    try:
+        tokens = shlex.split(command)
+    except ValueError:
+        return False
+    owned = owned_paths if isinstance(owned_paths, (set, frozenset)) else set(owned_paths)
+    return any(os.path.expanduser(t) in owned for t in tokens)
+
+
+def _merge_force_event(live_groups: object, frag_groups: list, owned_paths: Iterable[str]) -> list:
+    """Fragment groups first, then the live groups with owned hooks removed
+    (groups left empty are dropped; groups equal to a fragment group are
+    dropped as duplicates)."""
+    remaining: list = []
+    for group in live_groups if isinstance(live_groups, list) else []:
+        if isinstance(group, dict) and isinstance(group.get("hooks"), list):
+            kept = [h for h in group["hooks"] if not _hook_is_owned(h, owned_paths)]
+            if not kept:
+                continue
+            group = {**group, "hooks": kept}
+        if group in frag_groups:
+            continue
+        remaining.append(group)
+    return list(frag_groups) + remaining
+
+
+def _merge_settings_dict(live: dict, fragment: dict, owned_paths: Iterable[str] = frozenset()) -> dict:
+    """Merge `fragment` into `live`. Live keys are never deleted. For the
+    forced hook events, only hooks owned by this pack (see `_hook_is_owned`)
+    are replaced; foreign hooks survive (ADR-031)."""
     result: dict = {}
     keys = list(dict.fromkeys(list(live.keys()) + list(fragment.keys())))
 
@@ -462,7 +512,9 @@ def _merge_settings_dict(live: dict, fragment: dict) -> dict:
             merged_hooks = dict(live_hooks)
             for event in _FORCE_HOOK_EVENTS:
                 if event in frag_hooks:
-                    merged_hooks[event] = frag_hooks[event]
+                    merged_hooks[event] = _merge_force_event(
+                        live_hooks.get(event), frag_hooks[event], owned_paths
+                    )
             for event, value in frag_hooks.items():
                 if event not in _FORCE_HOOK_EVENTS and event not in merged_hooks:
                     merged_hooks[event] = value
@@ -480,7 +532,12 @@ def _load_fragment(fragment_path: Path, target: Path) -> dict:
     return json.loads(text)
 
 
-def merge_settings(fragment_path: Path, target: Path, backup_dir: Path) -> bool:
+def merge_settings(
+    fragment_path: Path,
+    target: Path,
+    backup_dir: Path,
+    owned_paths: Iterable[str] = frozenset(),
+) -> bool:
     """Merge fragment_path into <target>/settings.json. Returns whether a
     backup of the previous settings.json was written.
 
@@ -507,7 +564,7 @@ def merge_settings(fragment_path: Path, target: Path, backup_dir: Path) -> bool:
         shutil.copy2(settings_path, dest)
         backed_up = True
 
-    merged = _merge_settings_dict(live, fragment)
+    merged = _merge_settings_dict(live, fragment, owned_paths=owned_paths)
     settings_path.parent.mkdir(parents=True, exist_ok=True)
     settings_path.write_text(
         json.dumps(merged, indent=2, ensure_ascii=False, sort_keys=True) + "\n",
@@ -516,7 +573,9 @@ def merge_settings(fragment_path: Path, target: Path, backup_dir: Path) -> bool:
     return backed_up
 
 
-def _print_settings_dry_run(fragment_path: Path, target: Path) -> None:
+def _print_settings_dry_run(
+    fragment_path: Path, target: Path, owned_paths: Iterable[str] = frozenset()
+) -> None:
     fragment = _load_fragment(fragment_path, target)
     settings_path = target / "settings.json"
     live = {}
@@ -531,9 +590,27 @@ def _print_settings_dry_run(fragment_path: Path, target: Path) -> None:
                 file=sys.stderr,
             )
             return
-    merged = _merge_settings_dict(live, fragment)
+    merged = _merge_settings_dict(live, fragment, owned_paths=owned_paths)
     print("=== settings.json merge (dry-run, nothing written) ===")
     print(json.dumps(merged, indent=2, ensure_ascii=False, sort_keys=True))
+
+    def _dump(obj: dict) -> List[str]:
+        return json.dumps(obj, indent=2, ensure_ascii=False, sort_keys=True).splitlines()
+
+    print("\n=== settings.json diff (live -> merged) ===")
+    diff = list(
+        difflib.unified_diff(
+            _dump(live),
+            _dump(merged),
+            fromfile="settings.json (live)",
+            tofile="settings.json (merged)",
+            lineterm="",
+        )
+    )
+    if diff:
+        print("\n".join(diff))
+    else:
+        print("(no changes)")
 
 
 # ---------------------------------------------------------------------------
@@ -567,6 +644,11 @@ def install_or_update(pack: Pack, target: Path, force: bool, dry_run: bool) -> i
     managed = discover_managed_files(pack)
     installed = load_manifest(target, pack)
     entries = compute_plan(pack, target, managed, installed)
+    # Hooks pointing at these paths are this pack's (ADR-031): what ships now
+    # plus what the previous manifest recorded. Same `target` as __TARGET__.
+    owned_paths = frozenset(
+        str(target / rel) for rel in set(managed) | set((installed or {}).get("files", {}))
+    )
     _print_plan(pack, target, entries)
 
     blocking = [e for e in entries if e.action in _BLOCKING_ACTIONS]
@@ -582,7 +664,7 @@ def install_or_update(pack: Pack, target: Path, force: bool, dry_run: bool) -> i
         if pack.settings_fragment:
             fragment_path = pack.repo_root / pack.settings_fragment
             if fragment_path.exists():
-                _print_settings_dry_run(fragment_path, target)
+                _print_settings_dry_run(fragment_path, target, owned_paths)
         print("\n(dry-run: nothing written)")
         return EXIT_OK
 
@@ -603,7 +685,7 @@ def install_or_update(pack: Pack, target: Path, force: bool, dry_run: bool) -> i
         if pack.settings_fragment:
             fragment_path = pack.repo_root / pack.settings_fragment
             if fragment_path.exists():
-                settings_backed_up = merge_settings(fragment_path, target, backup_dir)
+                settings_backed_up = merge_settings(fragment_path, target, backup_dir, owned_paths)
         backup_used = files_backed_up or settings_backed_up
     except BoundaryViolation as exc:
         print(f"error: {exc}", file=sys.stderr)

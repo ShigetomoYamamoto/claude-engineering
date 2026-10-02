@@ -356,6 +356,143 @@ class SettingsMergeTest(InstallerTestBase):
         self.assertFalse((self.target / "settings.json").exists())
 
 
+class HookOwnershipMergeTest(InstallerTestBase):
+    """ADR-031: PreToolUse/PostToolUse swap only hooks owned by this pack."""
+
+    def setUp(self) -> None:
+        super().setUp()
+        self.pack = self.make_pack(settings_fragment="settings-fragment.json")
+        self._set_fragment("h.py")
+
+    def _set_fragment(self, hook_file: str, event: str = "PreToolUse") -> None:
+        fragment = {
+            "hooks": {
+                event: [
+                    {
+                        "matcher": "Bash",
+                        "hooks": [
+                            {"type": "command", "command": f"python3 __TARGET__/hooks/{hook_file}"}
+                        ],
+                    }
+                ]
+            }
+        }
+        _write(self.src / "settings-fragment.json", json.dumps(fragment))
+
+    def _live(self, settings: dict) -> None:
+        _write(self.target / "settings.json", json.dumps(settings))
+
+    def _settings(self) -> dict:
+        return json.loads((self.target / "settings.json").read_text(encoding="utf-8"))
+
+    def _commands(self, event: str) -> list:
+        return [h["command"] for g in self._settings()["hooks"][event] for h in g["hooks"]]
+
+    def test_foreign_groups_survive_and_core_groups_present(self):
+        foreign_pre = {"matcher": "*", "hooks": [{"type": "command", "command": "echo orca pre"}]}
+        foreign_post = {"matcher": "*", "hooks": [{"type": "command", "command": "echo orca post"}]}
+        self._live({"hooks": {"PreToolUse": [foreign_pre], "PostToolUse": [foreign_post]}})
+        self.assertEqual(self.run_cli(self.pack, "install"), installer.EXIT_OK)
+        hooks = self._settings()["hooks"]
+        self.assertIn(foreign_pre, hooks["PreToolUse"])
+        self.assertEqual(hooks["PostToolUse"], [foreign_post])
+        self.assertIn(f"python3 {self.target.resolve()}/hooks/h.py", self._commands("PreToolUse"))
+
+    def test_renamed_hook_is_removed_via_previous_manifest(self):
+        _write(self.src / "hooks" / "old.py", "old\n")
+        self._set_fragment("old.py")
+        self.assertEqual(self.run_cli(self.pack, "install"), installer.EXIT_OK)
+        (self.src / "hooks" / "old.py").rename(self.src / "hooks" / "new.py")
+        self._set_fragment("new.py")
+        self.assertEqual(self.run_cli(self.pack, "update"), installer.EXIT_OK)
+        cmds = self._commands("PreToolUse")
+        t = self.target.resolve()
+        self.assertIn(f"python3 {t}/hooks/new.py", cmds)
+        self.assertNotIn(f"python3 {t}/hooks/old.py", cmds)
+
+    def test_unmanaged_hook_under_target_hooks_is_kept(self):
+        other = f"bash '{self.target.resolve()}/hooks/other-tool.sh'"
+        self._live({"hooks": {"PreToolUse": [
+            {"matcher": "Bash", "hooks": [{"type": "command", "command": other}]}
+        ]}})
+        self.assertEqual(self.run_cli(self.pack, "install"), installer.EXIT_OK)
+        self.assertIn(other, self._commands("PreToolUse"))
+
+    def test_mixed_group_keeps_only_foreign_hook(self):
+        t = self.target.resolve()
+        core_hook = {"type": "command", "command": f"python3 {t}/hooks/h.py"}
+        foreign = {"type": "command", "command": "echo foreign"}
+        self._live({"hooks": {"PreToolUse": [
+            {"matcher": "Bash", "hooks": [core_hook, foreign]}
+        ]}})
+        self.assertEqual(self.run_cli(self.pack, "install"), installer.EXIT_OK)
+        groups = self._settings()["hooks"]["PreToolUse"]
+        self.assertEqual(len(groups), 2)
+        self.assertEqual(groups[1], {"matcher": "Bash", "hooks": [foreign]})
+        self.assertEqual(self._commands("PreToolUse").count(core_hook["command"]), 1)
+
+    def test_update_twice_is_idempotent(self):
+        self._live({"hooks": {"PreToolUse": [
+            {"matcher": "*", "hooks": [{"type": "command", "command": "echo orca"}]}
+        ]}})
+        self.assertEqual(self.run_cli(self.pack, "install"), installer.EXIT_OK)
+        self.assertEqual(self.run_cli(self.pack, "update"), installer.EXIT_OK)
+        first = (self.target / "settings.json").read_text(encoding="utf-8")
+        self.assertEqual(self.run_cli(self.pack, "update"), installer.EXIT_OK)
+        self.assertEqual((self.target / "settings.json").read_text(encoding="utf-8"), first)
+
+    def test_unparseable_command_is_kept(self):
+        bad = f"python3 '{self.target.resolve()}/hooks/h.py"  # unbalanced quote
+        self._live({"hooks": {"PreToolUse": [
+            {"matcher": "Bash", "hooks": [{"type": "command", "command": bad}]}
+        ]}})
+        self.assertEqual(self.run_cli(self.pack, "install"), installer.EXIT_OK)
+        self.assertIn(bad, self._commands("PreToolUse"))
+
+    def test_substring_path_is_not_owned(self):
+        lookalike = f"python3 {self.target.resolve()}/hooks/h.py.bak"
+        self._live({"hooks": {"PreToolUse": [
+            {"matcher": "Bash", "hooks": [{"type": "command", "command": lookalike}]}
+        ]}})
+        self.assertEqual(self.run_cli(self.pack, "install"), installer.EXIT_OK)
+        self.assertIn(lookalike, self._commands("PreToolUse"))
+
+    def test_pycache_and_pyc_are_not_shipped(self):
+        _write(self.src / "hooks" / "__pycache__" / "x.cpython-311.pyc", "bytecode")
+        _write(self.src / "hooks" / "y.pyc", "bytecode")
+        managed = installer.discover_managed_files(self.pack)
+        self.assertEqual(sorted(managed), ["hooks/h.py", "rules/a.md"])
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            self.assertEqual(self.run_cli(self.pack, "install"), installer.EXIT_OK)
+        self.assertNotIn(".pyc", out.getvalue())
+        self.assertFalse(list(self.target.rglob("*.pyc")))
+        self.assertFalse(list(self.target.rglob("__pycache__")))
+
+    def test_dry_run_prints_diff_with_removed_owned_hook(self):
+        self.assertEqual(self.run_cli(self.pack, "install"), installer.EXIT_OK)
+        t = self.target.resolve()
+        (self.src / "hooks" / "h.py").rename(self.src / "hooks" / "h2.py")
+        self._set_fragment("h2.py")
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            self.assertEqual(self.run_cli(self.pack, "update", dry_run=True), installer.EXIT_OK)
+        text = out.getvalue()
+        self.assertIn("=== settings.json diff (live -> merged) ===", text)
+        self.assertIn("--- settings.json (live)", text)
+        self.assertIn("+++ settings.json (merged)", text)
+        self.assertIn(f'-            "command": "python3 {t}/hooks/h.py"', text)
+
+    def test_dry_run_no_changes(self):
+        self.assertEqual(self.run_cli(self.pack, "install"), installer.EXIT_OK)
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            self.assertEqual(self.run_cli(self.pack, "update", dry_run=True), installer.EXIT_OK)
+        text = out.getvalue()
+        self.assertIn("=== settings.json diff (live -> merged) ===", text)
+        self.assertIn("(no changes)", text)
+
+
 class MalformedLiveSettingsTest(InstallerTestBase):
     """FIX 1: an unparseable live settings.json must never be dropped/overwritten."""
 
