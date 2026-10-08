@@ -1,4 +1,4 @@
-// gate-html local receiver.
+// review-html local receiver.
 //   node receiver.mjs url   --doc-id <id> --token <hex32> --file <name.html>
 //   node receiver.mjs serve --root <dir> --file <name.html> --doc-id <id> --token <hex32> [--once] [--port <n>]
 // stdout carries protocol lines only (READY / SUBMIT / ERROR). Diagnostics go to stderr.
@@ -12,7 +12,7 @@ const MAX_BODY = 256 * 1024;
 const TOKEN_RE = /^[0-9a-f]{32}$/;
 const FILE_RE = /^[A-Za-z0-9._-]+\.html$/;
 const DOC_ID_RE = /^[a-z0-9-]{3,64}$/;
-const KIND = 'gate-html/requirements';
+const KIND = 'review-html/answer';
 
 // Stable per-document port so the page origin (and its localStorage autosave)
 // survives a receiver restart. Shared by `url` and `serve`.

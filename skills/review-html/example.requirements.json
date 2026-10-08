@@ -1,5 +1,5 @@
 {
-  "kind": "gate-html/requirements",
+  "kind": "review-html/requirements",
   "version": 1,
   "docId": "example-room-precreate",
   "title": "ルーム事前作成",

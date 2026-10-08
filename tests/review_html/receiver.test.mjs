@@ -10,11 +10,11 @@ import { spawn, spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
-const RECEIVER = path.join(here, '../../skills/gate-html/receiver.mjs');
+const RECEIVER = path.join(here, '../../skills/review-html/receiver.mjs');
 const DOC = 'test-doc-1';
 const FILE = 'page.html';
 const TOKEN = 'a1b2c3d4e5f60718293a4b5c6d7e8f90';
-const root = fs.mkdtempSync(path.join(os.tmpdir(), 'gate-html-recv-'));
+const root = fs.mkdtempSync(path.join(os.tmpdir(), 'review-html-recv-'));
 fs.writeFileSync(path.join(root, FILE), '<!doctype html><title>t</title>hello');
 fs.writeFileSync(path.join(root, 'secret.txt'), 'secret');
 
@@ -53,7 +53,7 @@ const raw = (port, p, { method = 'GET', headers = {}, body } = {}) => new Promis
   if (body !== undefined) q.write(body);
   q.end();
 });
-const good = (extra = {}) => ({ kind: 'gate-html/requirements', version: 1, docId: DOC, verdict: 'approve', ...extra });
+const good = (extra = {}) => ({ kind: 'review-html/answer', version: 1, docId: DOC, verdict: 'approve', ...extra });
 const post = (port, body, headers = {}) => raw(port, `/${TOKEN}/submit`, { method: 'POST', headers: { 'Content-Type': 'application/json', ...headers }, body: typeof body === 'string' ? body : JSON.stringify(body) });
 
 test('url: deterministic, one line, same port as serve derivation', () => {
@@ -104,6 +104,8 @@ test('serve: routing, security checks and SUBMIT', async () => {
   const before = r.lines.length;
   assert.equal((await post(port, '{bad')).status, 400, 'invalid json');
   assert.equal((await post(port, good({ kind: 'other' }))).status, 400, 'wrong kind');
+  assert.equal((await post(port, good({ kind: 'gate-html/requirements' }))).status, 400, 'old kind rejected');
+  assert.equal((await post(port, good({ kind: 'review-html/requirements' }))).status, 400, 'input kind is not an answer');
   assert.equal((await post(port, good({ docId: 'other-doc' }))).status, 400, 'wrong docId');
   assert.equal((await post(port, '[1]')).status, 400, 'array body');
   assert.equal((await post(port, 'null')).status, 400, 'null body');
