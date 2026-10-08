@@ -11,7 +11,7 @@
 | `rules/` | コーディングスタイル・コードレベルセキュリティ・git 運用・並列/worktree・テスト・エージェント運用・ループ安全の各ルール |
 | `commands/` | 23個のスラッシュコマンド（`/requirements` `/design` `/plan` `/tdd` `/autorun` `/create-pr` `/deploy` `/review-loop` など） |
 | `agents/` | 18体のカスタムエージェント（architect, planner, tdd-guide, reviewer, fixer, requirements-analyst, deploy-runner, executor, git-runner など） |
-| `skills/` | `git-workflow`（コミット/ブランチ/PR規約の参照スキル）。コードを書く/直す段は `/autorun` を唯一の入口とし、`agents/tdd-guide.md`・`agents/planner.md` が実行部品を担う（旧`loop-engineering`スキルは ADR-025 で廃止・再配分） |
+| `skills/` | `git-workflow`（コミット/ブランチ/PR規約の参照スキル）と `gate-html`（`/autorun` の requirements ゲートの確認画面。ADR-032）。コードを書く/直す段は `/autorun` を唯一の入口とし、`agents/tdd-guide.md`・`agents/planner.md` が実行部品を担う（旧`loop-engineering`スキルは ADR-025 で廃止・再配分） |
 | `hooks/` | 保護ブランチ編集ガード・git 破壊操作ブロック・PR base チェック・コミットメッセージ規約チェックと、それぞれのテスト |
 | `workflows/` | `large-scope-execute.js`（大規模タスクの計画→赤確認→実装→検証を回す Workflow） |
 | `templates/` | `init-autonomous/`（`/init-autonomous` コマンドが生成するプロジェクト側ファイルのテンプレート集） |
