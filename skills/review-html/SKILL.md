@@ -7,7 +7,8 @@ description: Shows a document as one local HTML page where the user comments by 
 
 Shows content and collects the user's comments and answers. It never decides anything by itself: requirements, design and plans are still decided by `requirements-analyst`, `architect` and `planner`, and gate approval is still the user's chat reply.
 
-- Decision records: claude-core ADR-032 and ADR-033.
+- Decision records: claude-core ADR-032, ADR-033 and ADR-034 (design/plan profiles and one page per task with tabs).
+- Comments the page has sent stay on the page as 「送信済み」 (read-only); they are not sent again.
 - All paths are project-relative and assume the current directory is the project root. `SKILL_DIR` = `.claude/skills/review-html`. Never use `~/.claude/...`.
 
 ## Contexts
