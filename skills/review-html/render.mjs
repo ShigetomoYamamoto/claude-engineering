@@ -138,6 +138,7 @@ export function validateRequirements(data) {
       if (!obj(o, op)) return;
       known(o, ['value', 'label', 'note'], op);
       if (typeof o.value !== 'string' || !/^[a-z0-9_-]{1,32}$/.test(o.value)) err(`${op}.value`, 'must match ^[a-z0-9_-]{1,32}$');
+      else if (o.value === core.OTHER_VALUE) err(`${op}.value`, `"${core.OTHER_VALUE}" is reserved (the page adds 「${core.OTHER_LABEL}」 itself)`);
       else if (values.has(o.value)) err(`${op}.value`, `duplicate option value "${o.value}"`);
       else values.add(o.value);
       str(o, 'label', op); str(o, 'note', op, false);
@@ -188,7 +189,7 @@ export function validateDoc(data, profiles = ['consult']) {
   if (typeof data.docId !== 'string' || !/^[a-z0-9-]{3,64}$/.test(data.docId)) err('$.docId', 'must match [a-z0-9-]{3,64}');
   str(data, 'title', '$');
   str(data, 'project', '$', false);
-  str(data, 'purpose', '$', false);
+  str(data, 'purpose', '$', data.profile === 'consult'); // the box under the title says what is being confirmed
   if (typeof data.createdAt !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(data.createdAt)) err('$.createdAt', 'must be YYYY-MM-DD');
 
   const CONTENT = ['p', 'list', 'table', 'code', 'note'];
@@ -203,7 +204,9 @@ export function validateDoc(data, profiles = ['consult']) {
     }
     switch (b.type) {
       case 'p':
-        known(b, ['type', 'ref', 'text'], p); ref(b, p); str(b, 'text', p); break;
+        known(b, ['type', 'ref', 'text', 'variant'], p); ref(b, p); str(b, 'text', p);
+        if (b.variant !== undefined && b.variant !== 'label') err(`${p}.variant`, 'must be "label"');
+        break;
       case 'note':
         known(b, ['type', 'ref', 'tone', 'text'], p); ref(b, p); str(b, 'text', p);
         if (b.tone !== 'info' && b.tone !== 'warn') err(`${p}.tone`, 'must be "info" or "warn"');
@@ -263,6 +266,7 @@ export function validateDoc(data, profiles = ['consult']) {
           if (!obj(o, op)) return;
           known(o, ['value', 'label', 'note'], op);
           if (typeof o.value !== 'string' || !/^[a-z0-9_-]{1,32}$/.test(o.value)) err(`${op}.value`, 'must match ^[a-z0-9_-]{1,32}$');
+          else if (o.value === core.OTHER_VALUE) err(`${op}.value`, `"${core.OTHER_VALUE}" is reserved (the page adds 「${core.OTHER_LABEL}」 itself)`);
           else if (values.has(o.value)) err(`${op}.value`, `duplicate option value "${o.value}"`);
           else values.add(o.value);
           str(o, 'label', op); str(o, 'note', op, false);
@@ -310,10 +314,10 @@ export function requirementsToDoc(d) {
       {
         heading: '機能要件',
         blocks: d.stories.map((s) => ({
-          type: 'card', ref: s.id, title: `${s.id} ${s.role} として ${s.action}`,
+          type: 'card', ref: s.id, title: `${s.id} ${s.action}`,
           blocks: [
-            { type: 'p', text: `${s.outcome} のため。` },
-            ...(s.criteria.length ? [{ type: 'list', items: s.criteria.map((c) => ({ ref: c.id, text: `前提: ${c.given} / 操作: ${c.when} / 結果: ${c.then}` })) }] : [])
+            { type: 'list', items: [{ text: `誰が: ${s.role}` }, { text: `ねらい: ${s.outcome}` }] },
+            ...(s.criteria.length ? [{ type: 'p', variant: 'label', text: '受け入れ条件' }, { type: 'list', items: s.criteria.map((c) => ({ ref: c.id, text: `前提: ${c.given} / 操作: ${c.when} / 結果: ${c.then}` })) }] : [])
           ]
         }))
       },
@@ -424,7 +428,7 @@ export function renderHtml(d) {
   }
   function inner(b) {
     switch (b.type) {
-      case 'p': return `<p ${A(b.ref)}>${esc(b.text)}</p>`;
+      case 'p': return `<p${b.variant === 'label' ? ' class="sublabel"' : ''} ${A(b.ref)}>${esc(b.text)}</p>`;
       case 'list': return list(b);
       case 'table': return table(b);
       case 'code': return code(b);
@@ -448,10 +452,25 @@ export function renderHtml(d) {
           (rec ? '<span class="rec">推奨</span>' : '') +
           (op.note ? `<span class="optnote">${esc(op.note)}</span>` : '') + '</span></label>';
       }
+      h += `<label class="opt opt-other"><input type="radio" name="d-${esc(b.ref)}" value="${core.OTHER_VALUE}">` +
+        `<span class="optbody"><span ${A()}>${esc(core.OTHER_LABEL)}</span></span></label>` +
+        `<textarea class="other-ta" data-other="${esc(b.ref)}" maxlength="${core.OTHER_MAX}" rows="3" ` +
+        `placeholder="${esc(core.OTHER_PLACEHOLDER)}" aria-label="${esc(core.OTHER_LABEL)}" hidden></textarea>`;
       return h + '</div>';
     }
     return inner(b);
   }
+
+  const verdictDefs = core.PROFILES[d.profile].verdicts;
+  // The box right under the title: what this page is asking, and what each answer leads to.
+  heading = d.profile === 'requirements' ? 'この画面で確認すること' : 'この資料の目的';
+  const guideText = d.profile === 'requirements'
+    ? `${d.title} の要件（何を作るか・何を作らないか）が正しいかを確認します。この内容で設計や実装に進んでよいかを判断してください。`
+    : (d.purpose || '');
+  const guide = `<aside class="guide"><h2 ${A()}>${esc(heading)}</h2><p ${A()}>${esc(guideText)}</p>` +
+    '<p class="guide-sub">回答の選び方と、そのあとの動き</p><ul class="plain guide-list">' +
+    verdictDefs.map((v) => `<li class="gv"><span ${A()}><strong>${esc(v.label)}</strong>: ${esc(v.explain)}</span></li>`).join('') +
+    '</ul></aside>';
 
   const body = [];
   for (const s of d.sections) {
@@ -461,8 +480,8 @@ export function renderHtml(d) {
     body.push('</section>');
   }
 
-  const verdicts = core.PROFILES[d.profile].verdicts
-    .map((v) => `<label class="vopt"><input type="radio" name="verdict" value="${esc(v.value)}"><span>${esc(v.label)}</span></label>`).join('\n      ');
+  const verdicts = verdictDefs
+    .map((v) => `<label class="vopt"><input type="radio" name="verdict" value="${esc(v.value)}"><span class="vbody"><span class="vl">${esc(v.label)}</span><span class="vx">${esc(v.explain)}</span></span></label>`).join('\n      ');
 
   // Hash of the exact embedded JSON text: page.js uses it to drop autosave from an older revision.
   const dataJson = safeJson(d);
@@ -486,7 +505,7 @@ ${readAsset('page.css')}
 <header>
 <h1>${title}</h1>
 <p class="meta">${d.project ? esc(d.project) + ' / ' : ''}${esc(d.createdAt)}</p>
-${d.purpose ? `<p class="purpose">${esc(d.purpose)}</p>` : ''}
+${guide}
 <p class="staleinfo" id="stalenote" hidden>内容が更新されたので、前回の入力は引き継いでいません。</p>
 </header>
 ${body.join('\n')}

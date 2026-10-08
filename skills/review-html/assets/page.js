@@ -180,8 +180,24 @@
     chip.textContent = done ? '確認済み' : '未確認';
     chip.className = 'chip' + (done ? ' done' : '');
   }
+  function syncOther(ref) {
+    var ta = document.querySelector('textarea[data-other="' + ref + '"]');
+    if (!ta) return;
+    var d = state.decisions[ref];
+    ta.hidden = d.value !== core.OTHER_VALUE;       // other options hide it; the text stays in state
+    if (ta.value !== d.text) ta.value = d.text;
+  }
   function initDecisions() {
     core.collectDecisions(data).forEach(function (q) {
+      var ota = document.querySelector('textarea[data-other="' + q.ref + '"]');
+      if (ota) {
+        ota.addEventListener('input', function () {
+          if (state.sent) return;
+          state = core.applyDecisionText(state, q.ref, ota.value);
+          refreshChip(q.ref);
+          save();
+        });
+      }
       var radios = document.querySelectorAll('input[name="d-' + q.ref + '"]');
       Array.prototype.forEach.call(radios, function (r) {
         r.checked = r.value === state.decisions[q.ref].value;
@@ -191,6 +207,8 @@
           if (state.sent || !r.checked) return;
           state = core.applyDecisionClick(state, q.ref, r.value, wasChecked);
           refreshChip(q.ref);
+          syncOther(q.ref);
+          if (r.value === core.OTHER_VALUE && ota && !wasChecked) ota.focus();
           save();
         };
         r.addEventListener('change', function () { record(false); });
@@ -210,6 +228,7 @@
         }
       });
       refreshChip(q.ref);
+      syncOther(q.ref);
     });
   }
 
@@ -469,7 +488,7 @@
     editingId = null; confirmId = null;
     renderPanel();
     Array.prototype.forEach.call(radios, function (r) { r.disabled = true; });
-    Array.prototype.forEach.call(document.querySelectorAll('.dcard input'), function (r) { r.disabled = true; });
+    Array.prototype.forEach.call(document.querySelectorAll('.dcard input, .dcard textarea'), function (r) { r.disabled = true; });
     noteTa.disabled = true; sendBtn.disabled = true;
   }
   function showFallback(text) {

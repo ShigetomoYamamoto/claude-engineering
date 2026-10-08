@@ -8,22 +8,27 @@
   var CTX = 20;      // max chars of prefix/suffix kept with a comment
   var MAXLEN = 4000; // max chars of a comment / note
   var MAX_PAYLOAD_BYTES = 250000; // UTF-8 size cap of the serialized answer
+  // Reserved free-text option appended by the renderer to every decision.
+  var OTHER_VALUE = 'other';
+  var OTHER_LABEL = 'その他（自由記述）';
+  var OTHER_MAX = 2000;
+  var OTHER_PLACEHOLDER = '選択肢にない考えを書いてください';
 
   // Verdicts are fixed by profile, never taken from the input document.
   var PROFILES = {
     consult: {
       verdicts: [
-        { value: 'proceed', label: 'この内容で進めてよい' },
-        { value: 'revise', label: '直してほしい' },
-        { value: 'question', label: '質問・指摘を送る' }
+        { value: 'proceed', label: 'この内容で進めてよい', explain: '選んだ判断で話を進めます。元に戻せない操作の前には、チャットで確認します。' },
+        { value: 'revise', label: '直してほしい', explain: 'コメントをもとに資料を直し、もう一度見せます。' },
+        { value: 'question', label: '質問・指摘を送る', explain: 'コメントにチャットで答えます。' }
       ]
     },
     requirements: {
       verdicts: [
-        { value: 'approve', label: 'この内容でよい' },
-        { value: 'revise', label: '直してほしい' },
-        { value: 'rescope', label: '範囲を変える' },
-        { value: 'abort', label: '中止する' }
+        { value: 'approve', label: 'この内容でよい', explain: 'チャットで最後の確認をしてから、次の段階（設計や実装の計画）に進みます。' },
+        { value: 'revise', label: '直してほしい', explain: 'コメントをもとに要件を直し、もう一度この画面で見せます。' },
+        { value: 'rescope', label: '範囲を変える', explain: 'やること・やらないことを見直し、もう一度見せます。' },
+        { value: 'abort', label: '中止する', explain: 'チャットで、中止してよいかを確認します。' }
       ]
     }
   };
@@ -45,6 +50,10 @@
     return out;
   }
 
+  // A decision's options as the page shows them: the document's own options, then the reserved "other".
+  function optionsOf(q) { return q.options.concat([{ value: OTHER_VALUE, label: OTHER_LABEL }]); }
+  function cleanText(v) { return typeof v === 'string' ? cut(v, OTHER_MAX) : ''; }
+
   var uidN = 0;
   function uid() { uidN += 1; return 'c' + Date.now().toString(36) + uidN.toString(36) + Math.random().toString(36).slice(2, 5); }
   function cut(s, n) { return s.length > n ? s.slice(0, n) : s; }
@@ -52,7 +61,7 @@
   // Fresh state: recommended options pre-selected but untouched; no verdict.
   function initialState(data) {
     var decisions = {};
-    collectDecisions(data).forEach(function (d) { decisions[d.ref] = { value: d.recommended, touched: false }; });
+    collectDecisions(data).forEach(function (d) { decisions[d.ref] = { value: d.recommended, touched: false, text: '' }; });
     return { decisions: decisions, comments: [], verdict: null, note: '', sent: false };
   }
 
@@ -82,8 +91,8 @@
     if (!saved || typeof saved !== 'object') return st;
     collectDecisions(data).forEach(function (q) {
       var d = saved.decisions && typeof saved.decisions === 'object' ? saved.decisions[q.ref] : null;
-      if (d && typeof d === 'object' && q.options.some(function (o) { return o.value === d.value; })) {
-        st.decisions[q.ref] = { value: d.value, touched: d.touched === true };
+      if (d && typeof d === 'object' && optionsOf(q).some(function (o) { return o.value === d.value; })) {
+        st.decisions[q.ref] = { value: d.value, touched: d.touched === true, text: d.value === OTHER_VALUE ? cleanText(d.text) : '' };
       }
     });
     st.comments = cleanComments(saved.comments);
@@ -98,7 +107,7 @@
     var decisions = {};
     collectDecisions(data).forEach(function (q) {
       var d = (state.decisions && state.decisions[q.ref]) || { value: q.recommended, touched: false };
-      var opt = q.options.filter(function (o) { return o.value === d.value; })[0];
+      var opt = optionsOf(q).filter(function (o) { return o.value === d.value; })[0];
       decisions[q.ref] = {
         value: d.value,
         label: opt ? opt.label : '',
@@ -106,6 +115,7 @@
         touched: d.touched === true,
         changed: d.value !== q.recommended
       };
+      if (d.value === OTHER_VALUE) decisions[q.ref].text = cleanText(d.text).trim();
     });
     var comments = cleanComments(state.comments).map(function (c) {
       return { addr: c.addr, label: c.label, quote: c.quote, prefix: c.prefix, suffix: c.suffix, text: c.text };
@@ -164,7 +174,19 @@
   function applyDecisionClick(state, ref, value, wasChecked) {
     var decisions = {};
     Object.keys(state.decisions || {}).forEach(function (k) { decisions[k] = state.decisions[k]; });
-    decisions[ref] = { value: value, touched: true };
+    var prev = state.decisions && state.decisions[ref];
+    // The free text is kept while another option is selected, so switching back does not lose it.
+    decisions[ref] = { value: value, touched: true, text: prev ? cleanText(prev.text) : '' };
+    var next = {};
+    Object.keys(state).forEach(function (k) { next[k] = state[k]; });
+    next.decisions = decisions;
+    return next;
+  }
+  // Pure transition for typing into a decision's "other" textarea. Selecting "other" is implied by typing.
+  function applyDecisionText(state, ref, text) {
+    var decisions = {};
+    Object.keys(state.decisions || {}).forEach(function (k) { decisions[k] = state.decisions[k]; });
+    decisions[ref] = { value: OTHER_VALUE, touched: true, text: cleanText(text) };
     var next = {};
     Object.keys(state).forEach(function (k) { next[k] = state[k]; });
     next.decisions = decisions;
@@ -222,6 +244,8 @@
   }
 
   return {
+    OTHER_VALUE: OTHER_VALUE, OTHER_LABEL: OTHER_LABEL, OTHER_MAX: OTHER_MAX, OTHER_PLACEHOLDER: OTHER_PLACEHOLDER,
+    applyDecisionText: applyDecisionText, optionsOf: optionsOf,
     KIND: KIND, VERSION: VERSION, CTX: CTX, MAXLEN: MAXLEN, PROFILES: PROFILES,
     verdictValues: verdictValues, collectDecisions: collectDecisions,
     initialState: initialState, restoreState: restoreState, cleanComments: cleanComments,

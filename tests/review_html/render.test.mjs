@@ -187,3 +187,24 @@ test('a large document yields unique data-addr values', () => {
   assert.ok(addrs.length > 200);
   assert.equal(new Set(addrs).size, addrs.length);
 });
+
+test('requirements: box under the title, story wording (who / aim / acceptance criteria)', () => {
+  const html = fs.readFileSync(run(valid).outFile, 'utf8');
+  const head = html.slice(html.indexOf('<header>'), html.indexOf('</header>'));
+  assert.ok(head.includes('この画面で確認すること'));
+  assert.ok(head.includes(`${valid.title} の要件（何を作るか・何を作らないか）が正しいかを確認します。この内容で設計や実装に進んでよいかを判断してください。`));
+  for (const s of ['チャットで最後の確認をしてから、次の段階（設計や実装の計画）に進みます。', 'コメントをもとに要件を直し、もう一度この画面で見せます。', 'やること・やらないことを見直し、もう一度見せます。', 'チャットで、中止してよいかを確認します。']) assert.ok(head.includes(s), s);
+  const s1 = valid.stories[0];
+  assert.ok(html.includes(`>${s1.id} ${s1.action}</h3>`), 'card title: S1 <action>');
+  assert.ok(html.includes(`誰が: ${s1.role}`) && html.includes(`ねらい: ${s1.outcome}`));
+  assert.ok(html.includes('class="sublabel"') && html.includes('受け入れ条件'));
+  assert.ok(!html.includes('のため。') && !html.includes(' として '));
+  assert.ok(html.indexOf('誰が:') < html.indexOf('ねらい:') && html.indexOf('ねらい:') < html.indexOf('受け入れ条件'));
+});
+
+test('requirements: question option value other is reserved', () => {
+  const d = clone(); d.questions[0].options[0].value = 'other';
+  const r = run(d);
+  assert.equal(r.status, 1);
+  assert.ok(r.stderr.includes('"other" is reserved'), r.stderr);
+});

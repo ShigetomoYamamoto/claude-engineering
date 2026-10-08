@@ -110,6 +110,9 @@ const bad = [
   ['decision 6 options', (d) => { d.sections[3].blocks[0].options = 'abcdef'.split('').map((v) => ({ value: v, label: v })); d.sections[3].blocks[0].recommended = 'a'; }, 'options'],
   ['decision bad value', (d) => { d.sections[3].blocks[0].options[0].value = 'A B'; }, 'options[0].value'],
   ['decision duplicate value', (d) => { d.sections[3].blocks[0].options[1].value = 'cache'; }, 'duplicate option value'],
+  ['purpose missing', (d) => { delete d.purpose; }, '$.purpose'],
+  ['purpose empty', (d) => { d.purpose = '  '; }, '$.purpose'],
+  ['decision option value other is reserved', (d) => { d.sections[3].blocks[0].options[0].value = 'other'; }, '"other" is reserved'],
   ['decision recommended not in values', (d) => { d.sections[3].blocks[0].recommended = 'zz'; }, 'recommended'],
   ['code without text', (d) => { delete d.sections[2].blocks[1].blocks[1].text; }, 'text'],
   ['string over 4000 chars', (d) => { d.sections[0].blocks[0].text = 'あ'.repeat(4001); }, 'longer than 4000'],
@@ -199,4 +202,19 @@ test('requirements input renders through the same base: ids as addresses, requir
   assert.equal(new Set(a).size, a.length);
   assert.ok(h.includes('前提: ') && h.includes('操作: ') && h.includes('結果: '));
   assert.ok(h.includes('<table') && h.includes('設計が必要'));
+});
+
+test('guide box under the title: purpose, verdict explanations; other option and textarea per decision', () => {
+  const h = html(example);
+  const head = h.slice(h.indexOf('<header>'), h.indexOf('</header>'));
+  assert.ok(head.includes('class="guide"') && head.includes('この資料の目的') && head.includes(example.purpose));
+  for (const s of ['この内容で進めてよい', '選んだ判断で話を進めます。元に戻せない操作の前には、チャットで確認します。', 'コメントにチャットで答えます。']) assert.ok(head.includes(s), s);
+  assert.equal((head.match(/data-addr="b\d+"/g) || []).length, 5, 'heading + purpose + 3 answers are addressable');
+  assert.ok(h.includes('<span class="vx">コメントをもとに資料を直し、もう一度見せます。</span>'), 'explanation in the answer sheet');
+  const nDec = (h.match(/data-decision="/g) || []).length;
+  assert.ok(nDec >= 1);
+  assert.equal((h.match(/value="other"/g) || []).length, nDec);
+  assert.equal((h.match(/<textarea class="other-ta"[^>]*maxlength="2000"[^>]*placeholder="選択肢にない考えを書いてください"[^>]* hidden>/g) || []).length, nDec);
+  assert.ok(h.includes('その他（自由記述）'));
+  assert.ok(!/value="other" checked/.test(h) && (h.match(/class="rec"/g) || []).length === nDec, 'other is never recommended');
 });

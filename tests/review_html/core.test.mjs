@@ -85,13 +85,13 @@ test('restoreState drops unknown/invalid saved values', () => {
     comments: [{ addr: 'b1', quote: 'q', text: 'ok' }, { addr: 'b1', quote: 'q', text: '' }, 5],
     verdict: 'hack', note: 5
   });
-  assert.deepEqual(st.decisions.Q1, { value: 'cache', touched: false });
+  assert.deepEqual(st.decisions.Q1, { value: 'cache', touched: false, text: '' }); // text field added by the 'other' option
   assert.equal(st.comments.length, 1);
   assert.equal(st.comments[0].text, 'ok');
   assert.equal(st.verdict, null);
   assert.equal(st.note, '');
   const ok = core.restoreState(consult, { decisions: { Q1: { value: 'batch', touched: true } }, verdict: 'revise', note: 'n' });
-  assert.deepEqual(ok.decisions.Q1, { value: 'batch', touched: true });
+  assert.deepEqual(ok.decisions.Q1, { value: 'batch', touched: true, text: '' });
   assert.equal(ok.verdict, 'revise');
   assert.equal(core.restoreState(consult, { verdict: 'approve' }).verdict, null, 'verdict from the other profile is dropped');
   assert.deepEqual(core.restoreState(consult, null), core.initialState(consult));
@@ -148,7 +148,7 @@ test('applyDecisionClick: choosing another option -> touched and changed, state 
   const q = core.collectDecisions(consult)[0];
   const other = q.options.find((o) => o.value !== q.recommended).value;
   const st = core.applyDecisionClick(core.initialState(consult), q.ref, other, false);
-  assert.deepEqual(st.decisions[q.ref], { value: other, touched: true });
+  assert.deepEqual(st.decisions[q.ref], { value: other, touched: true, text: '' });
   st.verdict = 'proceed';
   const p = core.buildPayload(consult, st).decisions[q.ref];
   assert.equal(p.changed, true);
@@ -207,4 +207,47 @@ test('restoreState keeps sent only when saved.sent === true', () => {
   assert.equal(core.initialState(consult).sent, false);
   assert.equal(core.restoreState(consult, { sent: true }).sent, true);
   assert.equal(core.restoreState(consult, { sent: 'yes' }).sent, false);
+});
+
+// ---- reserved "other" option ----
+test('buildPayload: other + text -> value other, label, changed, trimmed text; other options carry no text', () => {
+  const q = core.collectDecisions(consult)[0];
+  let st = core.applyDecisionClick(core.initialState(consult), q.ref, 'other', false);
+  st = core.applyDecisionText(st, q.ref, '  別の案です \n');
+  st.verdict = 'proceed';
+  const d = core.buildPayload(consult, st).decisions[q.ref];
+  assert.deepEqual(d, { value: 'other', label: 'その他（自由記述）', recommended: q.recommended, touched: true, changed: true, text: '別の案です' });
+  const empty = core.applyDecisionClick(core.initialState(consult), q.ref, 'other', false);
+  empty.verdict = 'proceed';
+  assert.equal(core.buildPayload(consult, empty).decisions[q.ref].text, '');
+  assert.equal(core.buildPayload(consult, empty).decisions[q.ref].value, 'other');
+  const back = core.applyDecisionClick(st, q.ref, q.recommended, false);
+  assert.ok(!('text' in core.buildPayload(consult, back).decisions[q.ref]), 'text only when other is selected');
+  assert.equal(back.decisions[q.ref].text, '  別の案です \n', 'text kept in state while another option is selected');
+});
+
+test('applyDecisionClick to/from other keeps text; applyDecisionText caps length and does not mutate', () => {
+  const q = core.collectDecisions(consult)[0];
+  const s0 = core.initialState(consult);
+  const s1 = core.applyDecisionText(s0, q.ref, 'x'.repeat(2500));
+  assert.equal(s1.decisions[q.ref].text.length, 2000);
+  assert.equal(s1.decisions[q.ref].value, 'other');
+  assert.equal(s0.decisions[q.ref].text, '');
+  const s2 = core.applyDecisionClick(s1, q.ref, 'batch', false);
+  assert.equal(s2.decisions[q.ref].text.length, 2000);
+  assert.equal(core.applyDecisionClick(s2, q.ref, 'other', false).decisions[q.ref].value, 'other');
+});
+
+test('restoreState: other is accepted and keeps text; text dropped for any other value', () => {
+  const q = core.collectDecisions(consult)[0];
+  const a = core.restoreState(consult, { decisions: { [q.ref]: { value: 'other', touched: true, text: '自由記述' } } });
+  assert.deepEqual(a.decisions[q.ref], { value: 'other', touched: true, text: '自由記述' });
+  const b = core.restoreState(consult, { decisions: { [q.ref]: { value: 'batch', touched: true, text: '消える' } } });
+  assert.equal(b.decisions[q.ref].text, '');
+  const c = core.restoreState(consult, { decisions: { [q.ref]: { value: 'other', touched: true, text: 5 } } });
+  assert.equal(c.decisions[q.ref].text, '');
+});
+
+test('every verdict carries a Japanese explanation', () => {
+  for (const p of Object.values(core.PROFILES)) for (const v of p.verdicts) assert.ok(typeof v.explain === 'string' && v.explain.length > 5);
 });
