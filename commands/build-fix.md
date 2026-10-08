@@ -23,4 +23,4 @@ description: ビルド・コンパイルエラーを段階的に修正します�
 
 ## 関連エージェント
 
-`~/.claude/agents/build-error-resolver.md` を起動します。
+`.claude/agents/build-error-resolver.md` を起動します。

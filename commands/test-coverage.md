@@ -7,7 +7,7 @@ description: テストカバレッジを分析して 80% 以上に達するた�
 **tdd-guide エージェント**を起動して、カバレッジを分析し不足しているテストを生成します。
 
 > **位置づけ:** 「カバレッジ80%」は独立した段ではなく、**コードを作る段の完了条件の一部**
-> (`tdd-guide` の TDD Workflow Step6 / `~/.claude/rules/testing.md`)。`/test-coverage` はその完了条件を
+> (`tdd-guide` の TDD Workflow Step6 / `.claude/rules/testing.md`)。`/test-coverage` はその完了条件を
 > 後から補うための補助コマンドで、tdd-guide を呼ぶ。新規実装では tdd-guide 自身の RED→GREEN サイクルの
 > 中でカバレッジを満たすのが本筋(ADR-014・ADR-025)。
 
@@ -27,4 +27,4 @@ description: テストカバレッジを分析して 80% 以上に達するた�
 
 ## 関連エージェント
 
-`~/.claude/agents/tdd-guide.md` を起動します。
+`.claude/agents/tdd-guide.md` を起動します。

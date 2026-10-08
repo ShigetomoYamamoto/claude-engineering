@@ -7,7 +7,7 @@ not the exception.
 
 ## The four invariants (Loop Engineering constitution)
 
-Per [ADR-014](../docs/adr/014-loop-engineering-as-discipline.md), every Loop
+Per [ADR-014](https://github.com/ShigetomoYamamoto/claude-core/blob/main/docs/adr/014-loop-engineering-as-discipline.md), every Loop
 Engineering loop — at any scope (one code change, a review cycle, or a full
 `/autorun` pipeline) — must uphold four invariants. The guardrails in this file
 are how they are enforced in an autonomous run:
@@ -98,7 +98,7 @@ first**, then stop and report. Never silently continue past a ceiling.
   judges sizing (A/B/C) once at its own Sizing step before delegating the code rung to
   `agents/tdd-guide.md` (or `workflows/large-scope-execute.js` for A-大); the lower
   layer ADOPTS that decision and does NOT re-run its own sizing. Two judges of the same
-  thing can disagree — collapse them to one (see [ADR-014](../docs/adr/014-loop-engineering-as-discipline.md)
+  thing can disagree — collapse them to one (see [ADR-014](https://github.com/ShigetomoYamamoto/claude-core/blob/main/docs/adr/014-loop-engineering-as-discipline.md)
   and ADR-025).
 - **Gates are derived, not placed** — a boundary is a human gate IFF its done-condition
   is not machine-checkable (a direction judgment) or its action is irreversible. The

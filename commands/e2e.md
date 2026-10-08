@@ -27,4 +27,4 @@ description: Playwright で E2E テストを生成・実行します。e2e-runne
 
 ## 関連エージェント
 
-`~/.claude/agents/e2e-runner.md` を起動します。
+`.claude/agents/e2e-runner.md` を起動します。

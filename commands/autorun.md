@@ -81,7 +81,7 @@ current_phase が goal_phase を越えるまで繰り返す:
    で green を機械確認する。**green → 前進。赤 / タイムアウト / run 検出不能 → STOP・報告（fail-safe=停止）**。
    これは「手続き＋機械チェック」で担保し物理層（hook）は無い（過大表示しない）。**vibing でもこの機械確認は
    外れない**（vibing が外すのは PR 承認の事前確認＝人間ゲートだけ。正は `.claude/docs/autorun-flow.md`「Remote CI
-   green は pr の機械 success_test 成分」、`docs/adr/018-remote-ci-as-done-condition.md`）。
+   green は pr の機械 success_test 成分」、claude-core の `docs/adr/018-remote-ci-as-done-condition.md`）。
 
 ## ステップ 5: 停止と報告
 
@@ -106,6 +106,6 @@ current_phase が goal_phase を越えるまで繰り返す:
 - `.claude/docs/autorun-flow.md` — フロー定義（本コマンドが解釈する正）
 - `rules/loop-safety.md` — 安全規律の正本
 - `agents/tdd-guide.md` — tdd フェーズの実装部品（RED→GREEN）／`agents/planner.md` — 述語表の起草者／`workflows/large-scope-execute.js` — 大規模時の実行経路
-- `docs/adr/007-autonomous-loop-execution.md` / `docs/adr/008-orchestration-declarative-flow.md` — 設計決定
-- `docs/adr/015-vibing-mode.md` — `--vibing` フラグと kind 降格（`resolve_kind`）の決定
-- `docs/adr/018-remote-ci-as-done-condition.md` — remote CI green を pr の機械 success_test 成分とする決定
+- claude-core の `docs/adr/007-autonomous-loop-execution.md` / claude-core の `docs/adr/008-orchestration-declarative-flow.md` — 設計決定
+- claude-core の `docs/adr/015-vibing-mode.md` — `--vibing` フラグと kind 降格（`resolve_kind`）の決定
+- claude-core の `docs/adr/018-remote-ci-as-done-condition.md` — remote CI green を pr の機械 success_test 成分とする決定

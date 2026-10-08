@@ -123,7 +123,7 @@ description: |
 
 | 条件 | 案内する Plugin |
 |-----|--------------|
-| `.github/` を生成する（ほぼ常時） | GitHub Plugin（公式。`/plugin` で導入し `GITHUB_PERSONAL_ACCESS_TOKEN` を設定。[ADR-011](../docs/adr/011-official-github-plugin.md)）|
+| `.github/` を生成する（ほぼ常時） | GitHub Plugin（公式。`/plugin` で導入し `GITHUB_PERSONAL_ACCESS_TOKEN` を設定。[ADR-011](https://github.com/ShigetomoYamamoto/claude-core/blob/main/docs/adr/011-official-github-plugin.md)）|
 | `@supabase/` が依存にある | Supabase Plugin |
 | `vercel.json` または Vercel 関連ファイルがある | Vercel Plugin |
 | 環境変数に `SLACK_` が含まれる | Slack Plugin |
@@ -353,7 +353,7 @@ cp がブロックされた場合はユーザーに以下を実行してもら�
 ### 4-1〜4-11. 各種ファイルのテンプレート生成
 
 生成するファイルの中身は、保守性のためカテゴリ別テンプレート集へ外出しした
-（`~/.claude/templates/init-autonomous/`）。各テンプレートを読み、`{{ }}` プレースホルダを
+（`.claude/templates/init-autonomous/`）。各テンプレートを読み、`{{ }}` プレースホルダを
 ステップ1・2の収集情報で置換し、**検出スタックに該当する分だけ**生成する。各カテゴリ内の条件
 （「Laravel 検出時」等）はテンプレート内の見出しに従う。既存ファイルは上書き前に確認する。
 

@@ -17,7 +17,7 @@ tools by design (mirroring the `reviewer` agent). You report findings and a
 *recommended* fix for each, but the fix itself is applied by the `fixer` agent (or
 the implementer), then re-verified. This keeps detection and remediation in separate
 hands so a finding is never "fixed" and "signed off" by the same actor. See
-`rules/loop-safety.md` (Precondition 5) and [ADR-014](../docs/adr/014-loop-engineering-as-discipline.md).
+`rules/loop-safety.md` (Precondition 5) and [ADR-014](https://github.com/ShigetomoYamamoto/claude-core/blob/main/docs/adr/014-loop-engineering-as-discipline.md).
 
 The `Fix:` lines below are *recommendations to hand to the fixer*, not actions you take.
 

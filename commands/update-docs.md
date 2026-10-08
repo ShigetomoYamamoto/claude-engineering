@@ -21,4 +21,4 @@ description: package.json・.env.example を正とするドキュメントを同
 
 ## 関連エージェント
 
-`~/.claude/agents/doc-updater.md` を起動します。
+`.claude/agents/doc-updater.md` を起動します。

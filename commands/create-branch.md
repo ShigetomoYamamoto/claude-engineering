@@ -8,7 +8,7 @@ argument-hint: <目的(新規追加|変更|修正|削除|リファクタリン�
 
 # ブランチ作成ルール
 
-プレフィックス対応表・命名ルール・AI判断ガイドラインは `~/.claude/skills/git-workflow/SKILL.md` を参照すること。
+プレフィックス対応表・命名ルール・AI判断ガイドラインは `.claude/skills/git-workflow/SKILL.md` を参照すること。
 
 ## 引数
 

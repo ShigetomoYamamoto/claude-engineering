@@ -1,6 +1,6 @@
 # Autorun Flow — Declarative Flow Definition (the autonomous transition table)
 
-> 置き場所: 本定義は [ADR-022](./adr/022-autorun-flow-out-of-always-loaded-rules.md) により `rules/`（常時ロード）から `docs/`（オンデマンド参照）へ移動した。ランタイム参照パスは `~/.claude/docs/autorun-flow.md`（install.py が docs/ を symlink）。内容・正本性は不変。
+> 置き場所: 本定義は [ADR-022](https://github.com/ShigetomoYamamoto/claude-core/blob/main/docs/adr/022-autorun-flow-out-of-always-loaded-rules.md) により `rules/`（常時ロード）から `docs/`（オンデマンド参照）へ移動した。ランタイム参照パスは `.claude/docs/autorun-flow.md`（install.py が docs/ を symlink）。内容・正本性は不変。
 
 The single source of truth for the *shape* of the full pipeline, read by the
 `/autorun` interpreter. It holds no execution logic — only **which phases run, in
@@ -238,8 +238,8 @@ values here take effect only in an autonomous run (where RUN_STATE is declared).
 
 - `commands/autorun.md` — the interpreter that reads this definition
 - `rules/loop-safety.md` — the safety norm of record (hard stop / goal drift / irreversible ops)
-- `docs/adr/007-autonomous-loop-execution.md` — the four-gate decision
-- `docs/adr/008-orchestration-declarative-flow.md` — the declarative-flow decision and commit blanket approval
-- `docs/adr/015-vibing-mode.md` — the `--vibing` flag and the gate-demotion (`resolve_kind`) decision
-- `docs/adr/018-remote-ci-as-done-condition.md` — remote CI green as the machine success_test component of `pr` (invariant 1; not demoted by vibing)
+- claude-core の `docs/adr/007-autonomous-loop-execution.md` — the four-gate decision
+- claude-core の `docs/adr/008-orchestration-declarative-flow.md` — the declarative-flow decision and commit blanket approval
+- claude-core の `docs/adr/015-vibing-mode.md` — the `--vibing` flag and the gate-demotion (`resolve_kind`) decision
+- claude-core の `docs/adr/018-remote-ci-as-done-condition.md` — remote CI green as the machine success_test component of `pr` (invariant 1; not demoted by vibing)
 - `agents/tdd-guide.md` — the tdd phase's execution part (RED→GREEN); `agents/planner.md` — the predicate table's author; `workflows/large-scope-execute.js` — the A-大 execution path

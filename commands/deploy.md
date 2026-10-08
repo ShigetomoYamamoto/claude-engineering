@@ -33,7 +33,7 @@ description: 現在のコードベースをプロジェクトの設定に基づ�
 
 ## 関連エージェント
 
-`~/.claude/agents/deploy-runner.md` を起動します。
+`.claude/agents/deploy-runner.md` を起動します。
 
 ## 注意事項
 

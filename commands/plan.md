@@ -63,4 +63,4 @@ planner エージェントは「yes」「進めて」などの肯定的な返答
 
 ## 関連エージェント
 
-`~/.claude/agents/planner.md` を起動します。
+`.claude/agents/planner.md` を起動します。

@@ -22,4 +22,4 @@ description: デッドコード・未使用依存・重複を安全に検出・�
 
 ## 関連エージェント
 
-`~/.claude/agents/refactor-cleaner.md` を起動します。
+`.claude/agents/refactor-cleaner.md` を起動します。

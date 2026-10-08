@@ -42,4 +42,4 @@ RED → GREEN → REFACTOR → 繰り返す
 
 ## 関連エージェント
 
-`~/.claude/agents/tdd-guide.md` を起動します。
+`.claude/agents/tdd-guide.md` を起動します。

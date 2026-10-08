@@ -36,4 +36,4 @@ description: 直近のデプロイを以前のバージョンに戻します。r
 
 ## 関連エージェント
 
-`~/.claude/agents/rollback-runner.md` を起動します。
+`.claude/agents/rollback-runner.md` を起動します。

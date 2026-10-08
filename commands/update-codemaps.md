@@ -21,4 +21,4 @@ description: コードベースの構造を分析して docs/CODEMAPS/ のアー
 
 ## 関連エージェント
 
-`~/.claude/agents/doc-updater.md` を起動します。
+`.claude/agents/doc-updater.md` を起動します。
