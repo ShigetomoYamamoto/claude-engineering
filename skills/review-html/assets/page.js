@@ -4,12 +4,15 @@
   'use strict';
   var core = window.ReviewCore;
   var data = JSON.parse(document.getElementById('review-data').textContent);
+  var bundle = data.kind === core.BUNDLE_KIND;
+  var curTab = bundle ? core.currentTabOf(data) : null;
+  var curDoc = bundle ? curTab.doc : data;     // the document being decided now
   var KEY = 'review-html:' + data.docId;
   var HASH = (document.querySelector('meta[name="review-content-hash"]') || { content: '' }).content;
   var CTX = core.CTX, MAXLEN = core.MAXLEN;
   var $ = function (id) { return document.getElementById(id); };
   var main = $('content');
-  var state = core.initialState(data);
+  var state = bundle ? core.initialBundleState(data) : core.initialState(data);
   var blocks = [];            // addressed elements in document order
   var byAddr = {};            // addr -> element
   var editingId = null, confirmId = null, activeId = null;
@@ -143,11 +146,15 @@
     });
   }
 
+  // Decision elements are namespaced by tab key in a bundle (the same ref can exist in two tabs).
+  function dk(ref) { return bundle ? curTab.key + ':' + ref : ref; }
+
   // ---------- storage ----------
   function warnStorage() { $('storewarn').hidden = false; }
   $('storewarnClose').addEventListener('click', function () { $('storewarn').hidden = true; });
   function save() {
     try {
+      if (bundle) { window.localStorage.setItem(KEY, JSON.stringify(core.serializeBundleState(data, state))); return; }
       window.localStorage.setItem(KEY, JSON.stringify({
         contentHash: HASH,
         comments: state.comments.map(function (c) {
@@ -168,28 +175,29 @@
     var saved;
     try { saved = JSON.parse(raw); } catch (e) { return null; } // corrupt: discard silently
     if (!saved || typeof saved !== 'object') return null;
+    if (bundle) return saved; // per-tab hashes are checked by core.restoreBundleState
     if (saved.contentHash !== HASH) { $('stalenote').hidden = false; return null; }
     return saved;
   }
 
   // ---------- decisions ----------
   function refreshChip(ref) {
-    var chip = document.querySelector('[data-chip="' + ref + '"]');
+    var chip = document.querySelector('[data-chip="' + dk(ref) + '"]');
     if (!chip) return;
     var done = state.decisions[ref].touched;
     chip.textContent = done ? '確認済み' : '未確認';
     chip.className = 'chip' + (done ? ' done' : '');
   }
   function syncOther(ref) {
-    var ta = document.querySelector('textarea[data-other="' + ref + '"]');
+    var ta = document.querySelector('textarea[data-other="' + dk(ref) + '"]');
     if (!ta) return;
     var d = state.decisions[ref];
     ta.hidden = d.value !== core.OTHER_VALUE;       // other options hide it; the text stays in state
     if (ta.value !== d.text) ta.value = d.text;
   }
   function initDecisions() {
-    core.collectDecisions(data).forEach(function (q) {
-      var ota = document.querySelector('textarea[data-other="' + q.ref + '"]');
+    core.collectDecisions(curDoc).forEach(function (q) {
+      var ota = document.querySelector('textarea[data-other="' + dk(q.ref) + '"]');
       if (ota) {
         ota.addEventListener('input', function () {
           if (state.sent) return;
@@ -198,7 +206,7 @@
           save();
         });
       }
-      var radios = document.querySelectorAll('input[name="d-' + q.ref + '"]');
+      var radios = document.querySelectorAll('input[name="d-' + dk(q.ref) + '"]');
       Array.prototype.forEach.call(radios, function (r) {
         r.checked = r.value === state.decisions[q.ref].value;
         // State follows the radio's own events. `change` covers selecting another option; `click` also
@@ -240,7 +248,7 @@
   function card(c, found) {
     var el = mk('article', 'cm-card' + (c.id === activeId ? ' active' : ''));
     el.setAttribute('data-cid', c.id);
-    if (editingId === c.id) {
+    if (editingId === c.id && !c.sent) {
       el.className += ' cm-edit';
       var ta = mk('textarea'); ta.maxLength = MAXLEN; ta.value = c.text; ta.setAttribute('aria-label', 'コメントを編集');
       el.appendChild(mk('p', 'cm-label', labelOf(c)));
@@ -251,7 +259,7 @@
       cancel.addEventListener('click', function (e) { e.stopPropagation(); editingId = null; renderPanel(); });
       ok.addEventListener('click', function (e) {
         e.stopPropagation();
-        var v = ta.value.trim(); if (!v || state.sent) return;
+        var v = ta.value.trim(); if (!v || state.sent || c.sent) return;
         c.text = v; editingId = null; save(); renderPanel();
       });
       el.addEventListener('click', function (e) { e.stopPropagation(); });
@@ -267,17 +275,19 @@
     el.appendChild(mk('p', 'cm-quote', trunc(c.quote, 90)));
     el.appendChild(mk('p', 'cm-text', c.text));
     var row = mk('div', 'cm-actions');
-    var ed = mk('button', 'lnk', '編集'); ed.type = 'button'; ed.disabled = state.sent;
+    var ed = mk('button', 'lnk', '編集'); ed.type = 'button'; ed.disabled = state.sent || c.sent === true;
     var del = mk('button', 'lnk danger' + (confirmId === c.id ? ' confirm' : ''), confirmId === c.id ? '本当に削除' : '削除'); del.type = 'button'; del.disabled = state.sent;
-    ed.addEventListener('click', function (e) { e.stopPropagation(); if (state.sent) return; editingId = c.id; confirmId = null; renderPanel(); });
+    ed.addEventListener('click', function (e) { e.stopPropagation(); if (state.sent || c.sent) return; editingId = c.id; confirmId = null; renderPanel(); });
     del.addEventListener('click', function (e) {
       e.stopPropagation();
-      if (state.sent) return;
+      if (state.sent || c.sent) return;
       if (confirmId === c.id) { removeComment(c.id); return; }
       confirmId = c.id; renderPanel();
       setTimeout(function () { if (confirmId === c.id) { confirmId = null; renderPanel(); } }, 3500);
     });
-    row.appendChild(ed); row.appendChild(del); el.appendChild(row);
+    if (c.sent) row.appendChild(mk('span', 'cm-sent', '送信済み'));  // delivered earlier: shown, not editable
+    else { row.appendChild(ed); row.appendChild(del); }
+    el.appendChild(row);
     if (found) el.addEventListener('click', function () { gotoMark(c.id); });
     return el;
   }
@@ -290,7 +300,14 @@
     panelCount.textContent = n + ' 件';
     barCount.textContent = 'コメント一覧（' + n + '）';
     if (!n) panelBody.appendChild(mk('p', 'empty', 'まだコメントはありません。本文の文章を選択すると、「コメントを追加」が表示されます。'));
-    found.forEach(function (c) { panelBody.appendChild(card(c, true)); });
+    if (bundle) {
+      data.tabs.forEach(function (t) {
+        var mine = found.filter(function (c) { return core.tabOfAddr(c.addr) === t.key; });
+        if (!mine.length) return;
+        panelBody.appendChild(mk('h3', 'cm-group', core.tabLabel(t.key) + '（' + mine.length + '）'));
+        mine.forEach(function (c) { panelBody.appendChild(card(c, true)); });
+      });
+    } else found.forEach(function (c) { panelBody.appendChild(card(c, true)); });
     if (lost.length) {
       var o = mk('section', 'orph');
       o.appendChild(mk('h3', null, '場所が見つからないコメント（' + lost.length + '）'));
@@ -299,7 +316,8 @@
       panelBody.appendChild(o);
     }
     panelBody.scrollTop = top;
-    $('sendCount').textContent = 'コメント ' + n + ' 件も一緒に送ります';
+    var toSend = bundle ? core.unsentComments(all).length : n;
+    $('sendCount').textContent = 'コメント ' + toSend + ' 件も一緒に送ります' + (toSend < n ? '（送信済みの ' + (n - toSend) + ' 件は除く）' : '');
   }
   function setActive(id) {
     activeId = id;
@@ -319,12 +337,64 @@
   }
   function gotoMark(id) {
     var ms = marksOf(id); if (!ms.length) return;
+    if (bundle) { var c0 = state.comments.filter(function (c) { return c.id === id; })[0]; if (c0 && selectTab(core.tabOfAddr(c0.addr), false) === false && !isSelected(core.tabOfAddr(c0.addr))) return; }
     setActive(id);
     if (!wide.matches) setPanel(false);
     var r = ms[0].getBoundingClientRect();
     window.scrollBy({ top: r.top - window.innerHeight * 0.3, behavior: 'smooth' });
     flash(ms);
   }
+  // ---------- tabs (bundle) ----------
+  var tabEls = bundle ? Array.prototype.slice.call(document.querySelectorAll('[role="tab"]')) : [];
+  var panelEls = bundle ? Array.prototype.slice.call(document.querySelectorAll('[role="tabpanel"]')) : [];
+  // Returns true when the tab is (now) selected, false when an open comment popup with typed text keeps the user here.
+  function selectTab(key, focus) {
+    if (!bundle || !key) return false;
+    var policy = core.tabSwitchPolicy(!pop.hidden, popTa.value);
+    if (policy === 'stay' && isSelected(key)) return true;   // already on that tab: nothing to switch
+    if (policy === 'stay') {
+      $('popHint').hidden = false;                       // the typed comment stays bound to its selection on this tab
+      popTa.focus({ preventScroll: true });
+      return false;
+    }
+    if (policy === 'close-then-switch') closePop();      // nothing typed: close the popup explicitly, then switch
+    var found = false;
+    tabEls.forEach(function (t) {
+      var on = t.getAttribute('data-tab') === key; if (on) found = true;
+      t.setAttribute('aria-selected', on ? 'true' : 'false');
+      t.tabIndex = on ? 0 : -1;
+      if (on && focus) t.focus();
+    });
+    if (!found) return false;
+    // Keep the tab bar where it was: measure it, swap panels, then scroll by the drift (the content height changes).
+    var bar = document.querySelector('.tabbar'), before = bar ? bar.getBoundingClientRect().top : 0;
+    panelEls.forEach(function (pn) { pn.hidden = pn.getAttribute('data-panel') !== key; });
+    hideFloating(); pending = null;
+    if (bar) {
+      var drift = bar.getBoundingClientRect().top - before;
+      if (drift) window.scrollBy(0, drift);
+      var pn = document.getElementById('tp-' + key), rb = bar.getBoundingClientRect();
+      // Bar off-screen (page shorter than before): bring the top of the new panel under the bar.
+      if (pn && (rb.bottom < 0 || rb.top > window.innerHeight)) window.scrollBy(0, pn.getBoundingClientRect().top - rb.height);
+    }
+    return true;
+  }
+  function isSelected(key) {
+    return tabEls.some(function (t) { return t.getAttribute('data-tab') === key && t.getAttribute('aria-selected') === 'true'; });
+  }
+  tabEls.forEach(function (t, i) {
+    t.addEventListener('click', function () { selectTab(t.getAttribute('data-tab'), false); });
+    t.addEventListener('keydown', function (e) {
+      var n = tabEls.length, to = -1;
+      if (e.key === 'ArrowRight') to = (i + 1) % n;
+      else if (e.key === 'ArrowLeft') to = (i - 1 + n) % n;
+      else if (e.key === 'Home') to = 0;
+      else if (e.key === 'End') to = n - 1;
+      if (to < 0) return;
+      e.preventDefault(); selectTab(tabEls[to].getAttribute('data-tab'), true);
+    });
+  });
+
   function gotoCard(id) {
     setPanel(true);
     setActive(id);
@@ -347,7 +417,7 @@
   function renderAll() { renderMarks(); renderPanel(); setActive(activeId); }
   function removeComment(id) {
     if (state.sent) return;
-    state.comments = state.comments.filter(function (c) { return c.id !== id; });
+    state.comments = state.comments.filter(function (c) { return c.id !== id || c.sent; });
     confirmId = null; if (activeId === id) activeId = null;
     save(); renderAll();
   }
@@ -420,7 +490,7 @@
     var info = pending; if (!info) return;
     setPendingHighlight(info.range);
     $('popQuote').textContent = trunc(info.text, 80);
-    popTa.value = ''; popSave.disabled = true;
+    popTa.value = ''; popSave.disabled = true; $('popHint').hidden = true;
     pop.hidden = false; addBtn.hidden = true; selHint.hidden = true;
     var rs = rectsOf(info.range);
     if (narrowPop.matches) {
@@ -440,7 +510,7 @@
     popTa.focus({ preventScroll: true });
   }
   function closePop() {
-    pop.hidden = true; pending = null; setPendingHighlight(null);
+    pop.hidden = true; pending = null; setPendingHighlight(null); $('popHint').hidden = true;
     pop.classList.remove('is-sheet');
     document.documentElement.style.setProperty('--keyboard-inset', '0px');
   }
@@ -483,7 +553,9 @@
   noteTa.addEventListener('input', function () { state.note = noteTa.value; save(); });
   var SENT_MSG = '送信しました。Claude に届きました。チャットに戻ってください。';
   function lockSent() {
-    state.sent = true; save();
+    state.sent = true;
+    if (bundle) state = core.markCommentsSent(state);   // these comments are delivered: later answers do not repeat them
+    save();
     hideFloating(); pending = null; if (!pop.hidden) closePop();
     editingId = null; confirmId = null;
     renderPanel();
@@ -500,7 +572,7 @@
   sendBtn.addEventListener('click', function () {
     if (sending || state.sent) return;
     var payload;
-    try { payload = core.buildPayload(data, state); } catch (e) { setStatus('判断を選んでください。', 'warn'); return; }
+    try { payload = bundle ? core.buildBundlePayload(data, state) : core.buildPayload(data, state); } catch (e) { setStatus('判断を選んでください。', 'warn'); return; }
     var body = JSON.stringify(payload);
     if (!core.checkPayloadSize(body).ok) { setStatus('回答が大きすぎて送れません。コメントを短くするか、件数を減らしてください。', 'warn'); return; }
     sending = true; sendBtn.disabled = true; setStatus('送信しています…');
@@ -546,7 +618,10 @@
 
   // ---------- init ----------
   initBlocks();
-  state = core.restoreState(data, loadSaved());
+  if (bundle) {
+    state = core.restoreBundleState(data, loadSaved());
+    if (state.stale) $('stalenote').hidden = false;
+  } else state = core.restoreState(data, loadSaved());
   initDecisions();
   noteTa.value = state.note;
   Array.prototype.forEach.call(radios, function (r) { r.checked = r.value === state.verdict; });

@@ -15,6 +15,7 @@ const REQ_KIND = 'review-html/requirements';
 const DOC_KIND = 'review-html/doc';
 const DESIGN_KIND = 'review-html/design';
 const PLAN_KIND = 'review-html/plan';
+const BUNDLE_KIND = 'review-html/bundle';
 const OUT_RE = /^[A-Za-z0-9._-]+\.html$/;
 const MAX_STR = 2000;      // requirements input
 const DOC_MAX_STR = 4000;  // generic document
@@ -173,7 +174,7 @@ export function validateDoc(data, profiles = ['consult']) {
     const v = o.ref;
     if (v === undefined) { if (required) err(`${p}.ref`, 'required'); return; }
     if (typeof v !== 'string' || !REF_RE.test(v)) { err(`${p}.ref`, `must match ${REF_RE}`); return; }
-    if (/^b\d+$/.test(v)) { err(`${p}.ref`, `"${v}" is reserved for auto addresses (b1, b2, ...); choose another ref`); return; }
+    if (/^[bg]\d+$/.test(v)) { err(`${p}.ref`, `"${v}" is reserved for auto addresses (b1, b2, ... and g1, g2, ...); choose another ref`); return; }
     if (refs.has(v)) err(`${p}.ref`, `duplicate ref "${v}" (also at ${refs.get(v)})`);
     else refs.set(v, `${p}.ref`);
   };
@@ -732,6 +733,99 @@ export function planToDoc(d) {
 
 // Dispatch on kind. Returns { errors, warnings, doc } where doc is the generic document to render.
 export function prepare(data) {
+  if (isObj(data) && data.kind === BUNDLE_KIND) return prepareBundle(data);
+  return prepareOne(data);
+}
+
+const TAB_ORDER = ['requirements', 'design', 'plan'];
+const TAB_KEY_RE = /^consult-[a-z0-9-]{1,32}$/;
+// Bundle: validate the envelope, then every tab's input with its own validator (paths prefixed $.tabs[i].input).
+function prepareBundle(data) {
+  const errors = [];
+  const warnings = [];
+  const err = (p, m) => errors.push(`${p}: ${m}`);
+  const known = (o, allowed, p) => { for (const k of Object.keys(o)) if (!allowed.includes(k)) warnings.push(`${p}.${k}: unknown field (ignored)`); };
+  known(data, ['kind', 'version', 'docId', 'title', 'project', 'createdAt', 'tabs'], '$');
+  if (data.version !== 1) err('$.version', 'must be 1');
+  if (typeof data.docId !== 'string' || !/^[a-z0-9-]{3,64}$/.test(data.docId)) err('$.docId', 'must match [a-z0-9-]{3,64}');
+  if (typeof data.title !== 'string' || data.title.trim() === '') err('$.title', 'must be a non-empty string');
+  if (data.project !== undefined && typeof data.project !== 'string') err('$.project', 'must be a string');
+  if (typeof data.createdAt !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(data.createdAt)) err('$.createdAt', 'must be YYYY-MM-DD');
+  if (!Array.isArray(data.tabs)) { err('$.tabs', 'must be an array'); return { errors, warnings, doc: null }; }
+  if (data.tabs.length < 1 || data.tabs.length > 6) err('$.tabs', `must have 1 to 6 tabs (has ${data.tabs.length})`);
+  const seen = new Set();
+  let lastRank = -1;
+  let currentCount = 0;
+  const outTabs = [];
+  data.tabs.forEach((t, i) => {
+    const p = `$.tabs[${i}]`;
+    if (!isObj(t)) { err(p, 'must be an object'); return; }
+    known(t, ['key', 'status', 'approvedAt', 'answers', 'input'], p);
+    const keyOk = typeof t.key === 'string' && (TAB_ORDER.includes(t.key) || TAB_KEY_RE.test(t.key));
+    if (!keyOk) err(`${p}.key`, 'must be requirements, design, plan or consult-<slug> (^consult-[a-z0-9-]{1,32}$)');
+    else if (seen.has(t.key)) err(`${p}.key`, `duplicate tab key "${t.key}"`);
+    else {
+      seen.add(t.key);
+      const rank = TAB_ORDER.indexOf(t.key);
+      if (rank >= 0) {
+        if (rank < lastRank) err(`${p}.key`, 'tabs must be ordered requirements, design, plan');
+        lastRank = Math.max(lastRank, rank);
+      }
+    }
+    if (t.status !== 'approved' && t.status !== 'current') err(`${p}.status`, 'must be "approved" or "current"');
+    if (t.status === 'current') {
+      currentCount++;
+      if (i !== data.tabs.length - 1) err(`${p}.status`, 'the current tab must be the last tab');
+    }
+    if (t.status === 'approved' && (typeof t.approvedAt !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(t.approvedAt))) err(`${p}.approvedAt`, 'required for an approved tab (YYYY-MM-DD)');
+    if (t.status === 'current' && t.approvedAt !== undefined) err(`${p}.approvedAt`, 'only allowed on an approved tab');
+    if (t.answers !== undefined) {
+      if (t.status !== 'approved') err(`${p}.answers`, 'only allowed on an approved tab');
+      else if (!isObj(t.answers)) err(`${p}.answers`, 'must be an object');
+    }
+    let doc = null;
+    if (!isObj(t.input)) err(`${p}.input`, 'required (an input object)');
+    else if (t.input.kind === BUNDLE_KIND) err(`${p}.input.kind`, 'a bundle cannot contain a bundle');
+    else {
+      const inner = { ...t.input, docId: data.docId }; // inner docId is ignored; the bundle's is used
+      const r = prepareOne(inner);
+      for (const e of r.errors) errors.push(e.replace('$', `${p}.input`));
+      for (const w of r.warnings) warnings.push(w.replace('$', `${p}.input`));
+      doc = r.doc;
+      if (doc && keyOk) {
+        const expect = TAB_ORDER.includes(t.key) ? t.key : 'consult';
+        if (doc.profile !== expect) err(`${p}.input.kind`, `tab "${t.key}" must hold a "${expect === 'consult' ? DOC_KIND : 'review-html/' + expect}" input (profile is "${doc.profile}")`);
+      }
+    }
+    if (doc && isObj(t.answers) && t.status === 'approved') {
+      const byRef = new Map(core.collectDecisions(doc).map((q) => [q.ref, q]));
+      for (const [ref, val] of Object.entries(t.answers)) {
+        const q = byRef.get(ref);
+        const allowed = q ? [...q.options.map((o) => o.value), core.OTHER_VALUE] : [];
+        if (!q) err(`${p}.answers.${ref}`, 'not a decision of this tab');
+        else if (isObj(val)) {
+          // Recorded as "other": { "value": "other", "text": "..." }
+          for (const k of Object.keys(val)) if (k !== 'value' && k !== 'text') err(`${p}.answers.${ref}.${k}`, 'unknown field (allowed: value, text)');
+          if (val.value !== core.OTHER_VALUE) err(`${p}.answers.${ref}.value`, `an object answer must have value "${core.OTHER_VALUE}"`);
+          if (val.text !== undefined && (typeof val.text !== 'string' || val.text.length > core.OTHER_MAX)) err(`${p}.answers.${ref}.text`, `must be a string of at most ${core.OTHER_MAX} chars`);
+        } else if (typeof val !== 'string' || !allowed.includes(val)) err(`${p}.answers.${ref}`, `must be one of ${allowed.join(', ')} or { "value": "other", "text": "..." }`);
+      }
+    }
+    if (doc && keyOk && (t.status === 'approved' || t.status === 'current')) {
+      outTabs.push({
+        key: t.key, status: t.status, ...(t.status === 'approved' ? { approvedAt: t.approvedAt, ...(isObj(t.answers) ? { answers: t.answers } : {}) } : {}),
+        contentHash: crypto.createHash('sha256').update(JSON.stringify(doc)).digest('hex'), doc
+      });
+    }
+  });
+  if (data.tabs.length && currentCount !== 1) err('$.tabs', `exactly one tab must be "current" (has ${currentCount})`);
+  if (errors.length) return { errors, warnings, doc: null };
+  const doc = { kind: BUNDLE_KIND, version: 1, docId: data.docId, title: data.title, createdAt: data.createdAt, tabs: outTabs };
+  if (data.project) doc.project = data.project;
+  return { errors, warnings, doc };
+}
+
+function prepareOne(data) {
   const adapters = {
     [REQ_KIND]: [validateRequirements, requirementsToDoc, 'requirements'],
     [DESIGN_KIND]: [validateDesign, designToDoc, 'design'],
@@ -767,16 +861,26 @@ function readAsset(name) {
   return t;
 }
 
-export function renderHtml(d) {
+// Renders one document (a whole page, or one tab of a bundle). opt: { ns, tabLabel, status, approvedAt, answers }.
+function renderParts(d, opt) {
+  const ns = opt.ns || '';
+  const approved = opt.status === 'approved';
+  const answers = opt.answers || {};
   let auto = 0;
+  let gauto = 0;
   let heading = '';
   // Address attributes for one text-bearing element: the block's ref, else b1, b2, ... in document order.
-  const A = (ref) => {
-    const addr = ref ?? `b${++auto}`;
-    return `data-addr="${esc(addr)}" data-label="${esc(heading + (ref ? ` ${ref}` : ''))}"`;
+  // In a bundle every address is namespaced by the tab key and every label starts with the tab label.
+  // Guide-box elements (G) have their own counter (g1, g2, ...) in a bundle, so the body's b<n> addresses
+  // never depend on the tab's status (current guide has a verdict list, approved guide does not).
+  const addrAttr = (raw, ref) => {
+    const addr = ns ? `${ns}:${raw}` : raw;
+    const label = (opt.tabLabel ? `${opt.tabLabel} › ` : '') + heading + (ref ? ` ${ref}` : '');
+    return `data-addr="${esc(addr)}" data-label="${esc(label)}"`;
   };
+  const A = (ref) => addrAttr(ref ?? `b${++auto}`, ref);
+  const G = () => (ns ? addrAttr(`g${++gauto}`) : A());
   const refAttr = (b) => (b.ref ? ` data-ref="${esc(b.ref)}"` : '');
-
   function list(b) {
     const tag = b.ordered ? 'ol' : 'ul';
     let h = `<${tag} class="plain"${refAttr(b)}>`;
@@ -819,19 +923,46 @@ export function renderHtml(d) {
         `<h3 ${A(b.ref)}>${esc(b.title)}</h3>` + (b.tag ? `<span class="tag">${esc(b.tag)}</span>` : '') + '</div>' +
         b.blocks.map(inner).join('') + '</div>';
     }
-    if (b.type === 'decision') {
-      let h = `<div class="card dcard" data-decision="${esc(b.ref)}"><span class="chip" data-chip="${esc(b.ref)}">未確認</span>` +
+    if (b.type === 'decision' && approved) {
+      // Approved tab: the recorded answer (else the recommended option), shown but not editable.
+      const dk = `${ns}:${b.ref}`;
+      const ans = answers[b.ref];
+      const chosen = typeof ans === 'string' ? ans : (isObj(ans) ? ans.value : b.recommended);
+      const otherText = isObj(ans) && typeof ans.text === 'string' ? ans.text.trim() : '';
+      let h = `<div class="card dcard dcard-approved" data-decision="${esc(dk)}"><span class="chip">承認時の回答</span>` +
         `<p class="q" ${A(b.ref)}>${esc(b.text)}</p>`;
       for (const op of b.options) {
         const rec = op.value === b.recommended;
-        h += `<label class="opt"><input type="radio" name="d-${esc(b.ref)}" value="${esc(op.value)}"${rec ? ' checked' : ''}>` +
+        h += `<label class="opt"><input type="radio" name="d-${esc(dk)}" value="${esc(op.value)}"${op.value === chosen ? ' checked' : ''} disabled>` +
           `<span class="optbody"><span ${A()}>${esc(op.label)}</span>` +
           (rec ? '<span class="rec">推奨</span>' : '') +
           (op.note ? `<span class="optnote">${esc(op.note)}</span>` : '') + '</span></label>';
       }
-      h += `<label class="opt opt-other"><input type="radio" name="d-${esc(b.ref)}" value="${core.OTHER_VALUE}">` +
+      // The "other" label is always emitted (hidden unless it is the recorded answer), so the tab's b<n>
+      // addresses are the same as in the current rendering whatever was answered.
+      const otherChosen = chosen === core.OTHER_VALUE;
+      h += `<label class="opt opt-other"${otherChosen ? '' : ' hidden'}><input type="radio" name="d-${esc(dk)}" value="${core.OTHER_VALUE}"${otherChosen ? ' checked' : ''} disabled>` +
+        `<span class="optbody"><span ${A()}>${esc(core.OTHER_LABEL)}</span></span></label>`;
+      if (otherChosen) {
+        // The recorded free text has its own non-b address ("<tab>:<ref>.other"; refs never contain ".").
+        if (otherText) h += `<p class="other-text" ${addrAttr(`${b.ref}.other`, b.ref + ' その他')}>${esc(otherText)}</p>`;
+      }
+      return h + '</div>';
+    }
+    if (b.type === 'decision') {
+      const dk = ns ? `${ns}:${b.ref}` : b.ref;
+      let h = `<div class="card dcard" data-decision="${esc(dk)}"><span class="chip" data-chip="${esc(dk)}">未確認</span>` +
+        `<p class="q" ${A(b.ref)}>${esc(b.text)}</p>`;
+      for (const op of b.options) {
+        const rec = op.value === b.recommended;
+        h += `<label class="opt"><input type="radio" name="d-${esc(dk)}" value="${esc(op.value)}"${rec ? ' checked' : ''}>` +
+          `<span class="optbody"><span ${A()}>${esc(op.label)}</span>` +
+          (rec ? '<span class="rec">推奨</span>' : '') +
+          (op.note ? `<span class="optnote">${esc(op.note)}</span>` : '') + '</span></label>';
+      }
+      h += `<label class="opt opt-other"><input type="radio" name="d-${esc(dk)}" value="${core.OTHER_VALUE}">` +
         `<span class="optbody"><span ${A()}>${esc(core.OTHER_LABEL)}</span></span></label>` +
-        `<textarea class="other-ta" data-other="${esc(b.ref)}" maxlength="${core.OTHER_MAX}" rows="3" ` +
+        `<textarea class="other-ta" data-other="${esc(dk)}" maxlength="${core.OTHER_MAX}" rows="3" ` +
         `placeholder="${esc(core.OTHER_PLACEHOLDER)}" aria-label="${esc(core.OTHER_LABEL)}" hidden></textarea>`;
       return h + '</div>';
     }
@@ -845,12 +976,19 @@ export function renderHtml(d) {
     design: `${d.title} の設計（どう作るか）が正しいかを確認します。この設計で実装の計画に進んでよいかを判断してください。`,
     plan: `${d.title} の実装計画（どの順で、どのファイルを、どう変えるか）が正しいかを確認します。この計画で実装に進んでよいかを判断してください。`
   };
-  heading = d.profile === 'consult' ? 'この資料の目的' : 'この画面で確認すること';
   const guideText = d.profile === 'consult' ? (d.purpose || '') : GUIDE[d.profile];
-  const guide = `<aside class="guide"><h2 ${A()}>${esc(heading)}</h2><p ${A()}>${esc(guideText)}</p>` +
-    '<p class="guide-sub">回答の選び方と、そのあとの動き</p><ul class="plain guide-list">' +
-    verdictDefs.map((v) => `<li class="gv"><span ${A()}><strong>${esc(v.label)}</strong>: ${esc(v.explain)}</span></li>`).join('') +
-    '</ul></aside>';
+  let guide;
+  if (approved) {
+    heading = `${d.profile === 'consult' ? '回答済み' : '承認済み'}（${opt.approvedAt}）`;
+    const first = guideText.indexOf('。') >= 0 ? guideText.slice(0, guideText.indexOf('。') + 1) : guideText;
+    guide = `<aside class="guide guide-approved"><h2 ${G()}>${esc(heading)}</h2><p ${G()}>${esc(first)}</p></aside>`;
+  } else {
+    heading = d.profile === 'consult' ? 'この資料の目的' : 'この画面で確認すること';
+    guide = `<aside class="guide"><h2 ${G()}>${esc(heading)}</h2><p ${G()}>${esc(guideText)}</p>` +
+      '<p class="guide-sub">回答の選び方と、そのあとの動き</p><ul class="plain guide-list">' +
+      verdictDefs.map((v) => `<li class="gv"><span ${G()}><strong>${esc(v.label)}</strong>: ${esc(v.explain)}</span></li>`).join('') +
+      '</ul></aside>';
+  }
 
   const body = [];
   for (const s of d.sections) {
@@ -858,6 +996,32 @@ export function renderHtml(d) {
     body.push(`<section><h2 ${A(s.ref)}>${esc(s.heading)}</h2>`);
     for (const b of s.blocks) body.push(render(b));
     body.push('</section>');
+  }
+  return { guide, body: body.join('\n'), verdictDefs };
+}
+
+export function renderHtml(d) {
+  const bundle = d.kind === BUNDLE_KIND;
+  let verdictDefs, headExtra, mainBody, dlgTitle, answerLabel;
+  if (bundle) {
+    const parts = d.tabs.map((t) => ({ t, p: renderParts(t.doc, { ns: t.key, tabLabel: core.tabLabel(t.key), status: t.status, approvedAt: t.approvedAt, answers: t.answers }) }));
+    const cur = d.tabs[d.tabs.length - 1];
+    verdictDefs = parts[parts.length - 1].p.verdictDefs;
+    const sel = (t) => t.status === 'current';
+    headExtra = '';
+    mainBody = '<nav class="tabbar" id="tabbar"><div class="tablist" role="tablist" aria-label="資料の段階">' +
+      d.tabs.map((t) => `<button type="button" role="tab" class="tab${sel(t) ? ' is-current' : ''}" id="tab-${esc(t.key)}" data-tab="${esc(t.key)}" aria-controls="tp-${esc(t.key)}" aria-selected="${sel(t)}" tabindex="${sel(t) ? 0 : -1}">` +
+        `<span class="tab-name">${esc(core.tabLabel(t.key))}</span><span class="tab-badge ${t.status}">${t.status === 'approved' ? (t.doc.profile === 'consult' ? '済み' : '承認済み') : '確認中'}</span></button>`).join('') +
+      '</div></nav>\n' +
+      parts.map(({ t, p }) => `<div class="tabpanel" role="tabpanel" id="tp-${esc(t.key)}" data-panel="${esc(t.key)}" aria-labelledby="tab-${esc(t.key)}" tabindex="0"${sel(t) ? '' : ' hidden'}>\n${p.guide}\n${p.body}\n</div>`).join('\n');
+    answerLabel = core.tabLabel(cur.key);
+    dlgTitle = `${answerLabel}について回答する`;
+  } else {
+    const p = renderParts(d, {});
+    verdictDefs = p.verdictDefs;
+    headExtra = p.guide;
+    mainBody = p.body;
+    dlgTitle = '回答する';
   }
 
   const verdicts = verdictDefs
@@ -885,10 +1049,10 @@ ${readAsset('page.css')}
 <header>
 <h1>${title}</h1>
 <p class="meta">${d.project ? esc(d.project) + ' / ' : ''}${esc(d.createdAt)}</p>
-${guide}
+${headExtra}
 <p class="staleinfo" id="stalenote" hidden>内容が更新されたので、前回の入力は引き継いでいません。</p>
 </header>
-${body.join('\n')}
+${mainBody}
 <footer class="page-foot">本文の一部を選択するとコメントを付けられます。入力はこのブラウザに自動保存されます。</footer>
 </main>
 <aside class="panel" id="panel" aria-label="コメント一覧">
@@ -909,6 +1073,7 @@ ${body.join('\n')}
 <div class="pop" id="pop" role="dialog" aria-label="コメントを追加" hidden>
   <p class="pop-quote" id="popQuote"></p>
   <textarea id="popTa" maxlength="4000" rows="3" placeholder="コメントを入力" aria-label="コメント"></textarea>
+  <p class="pop-hint" id="popHint" role="status" hidden>入力中のコメントがあります。保存するか、キャンセルしてからタブを切り替えてください。</p>
   <div class="pop-foot">
     <span class="pop-key">Ctrl / ⌘ + Enter で保存</span>
     <div class="pop-btns">
@@ -921,7 +1086,7 @@ ${body.join('\n')}
 <div class="scrim" id="scrim" hidden>
   <section class="dlg" role="dialog" aria-modal="true" aria-labelledby="dlgTitle">
     <div class="dlg-head">
-      <h2 class="dlg-title" id="dlgTitle" tabindex="-1">回答する</h2>
+      <h2 class="dlg-title" id="dlgTitle" tabindex="-1">${esc(dlgTitle)}</h2>
       <button type="button" class="x" id="dlgClose" aria-label="閉じる">×</button>
     </div>
     <fieldset>

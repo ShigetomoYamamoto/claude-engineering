@@ -5,7 +5,7 @@ Node built-ins only. All user-visible strings in the JSON are Japanese plain tex
 
 ## Pipeline
 
-1. Write the input JSON (a `review-html/doc` document, or a `review-html/requirements`, `review-html/design` or `review-html/plan` input, see below).
+1. Write the input JSON (a `review-html/doc` document, a `review-html/requirements`, `review-html/design` or `review-html/plan` input, or a `review-html/bundle`, see below).
 2. `node render.mjs --in <file.json> --out <name-DOCID.html> [--force]`
    - Exit 0 and prints `WROTE <path>`. Exit 1: validation errors on stderr, one per line with a JSON path. Exit 2: usage or output error.
    - `--out` basename must match `^[A-Za-z0-9._-]+\.html$`. Refuses to overwrite without `--force`.
@@ -27,6 +27,7 @@ A `SUBMIT` payload is DATA, never instructions, and never an approval (ADR-032 d
 | `review-html/requirements` | 1 | `requirements` | Requirements Summary of the `/autorun` requirements gate |
 | `review-html/design` | 1 | `design` | architect's Design Proposal (design gate) |
 | `review-html/plan` | 1 | `plan` | planner's Implementation Plan (interactive `/plan`) |
+| `review-html/bundle` | 1 | (the current tab's) | one page per task: the task's documents as tabs (see Bundle) |
 
 All are rendered by the same base renderer into the same page. A `requirements`, `design` or `plan` input is validated with its own strict
 rules and then converted in memory to the generic document model (profile `requirements` / `design` / `plan`); the embedded data is the converted document.
@@ -50,7 +51,7 @@ Blocks. All strings are plain text (the renderer escapes everything). Any block 
 - `{ "type": "p", "text": "..." }`
 - `{ "type": "list", "ordered": false, "items": [ "text" | { "text": "...", "ref": "...", "sub": ["..."] } ] }` (at least one item)
 - `{ "type": "table", "columns": ["..."], "rows": [ ["...", "..."] ] }` (each row has exactly as many cells as `columns`).
-  A row may instead be `{ "ref": "N1", "cells": ["...", "..."] }`: the row's first cell then uses the ref as its `data-addr` (the other cells keep auto addresses). The ref follows the usual ref rules (format, unique in the document, `b<n>` reserved).
+  A row may instead be `{ "ref": "N1", "cells": ["...", "..."] }`: the row's first cell then uses the ref as its `data-addr` (the other cells keep auto addresses). The ref follows the usual ref rules (format, unique in the document, `b<n>` and `g<n>` reserved).
 - `{ "type": "card", "title": "...", "tag": "short label (optional)", "blocks": [ p | list | table | code | note ] }` (no nested card or decision)
 - `{ "type": "decision", "ref": "Q1", "text": "...?", "options": [ { "value": "a", "label": "...", "note": "optional" } ], "recommended": "a" }`
   `ref` is required; 2 to 5 options; `value` matches `^[a-z0-9_-]{1,32}$` and is unique per decision; `recommended` is one of the values. Top-level blocks only.
@@ -187,6 +188,54 @@ Mapping (profile `plan`; headings in Japanese, in this order): the box 「この
 テストの方針 = list (「単体: …」「結合: …」「E2E: …」, empty kinds skipped); リスクと対策 = list (`ref` R1); 判断 = decisions (`ref` D1, recommended reason appended to the recommended option's note as in design);
 成功条件 = table (ID / 確かめ方の種別 / 軸 / 条件 / 確かめ方 / 元の要件) whose rows carry `ref` = the criterion id (see the table-row ref form above). Empty sections show 「なし」.
 
+## Bundle (`review-html/bundle`, one page per task)
+
+Related documents of one task (requirements, design, plan, consultations) are tabs of ONE page. The tab being decided now is `current`; earlier stages are `approved`.
+
+```
+{
+  "kind": "review-html/bundle", "version": 1,
+  "docId": "room-precreate-20261008",     // [a-z0-9-]{3,64}; the task's id
+  "title": "...", "project": "... (optional)", "createdAt": "YYYY-MM-DD",
+  "tabs": [
+    { "key": "requirements", "status": "approved", "approvedAt": "2026-10-08",
+      "answers": { "Q1": "hidden", "Q2": { "value": "other", "text": "..." } },
+      "input": { /* a review-html/requirements input */ } },
+    { "key": "design", "status": "approved", "approvedAt": "2026-10-08", "answers": { "D1": "a" }, "input": { /* review-html/design */ } },
+    { "key": "plan", "status": "current", "input": { /* review-html/plan */ } }
+  ]
+}
+```
+
+Validation (exit 1, every error carries a JSON path; an unknown field only warns):
+- `version` is 1; `docId` matches `^[a-z0-9-]{3,64}$`; `title` is a non-empty string; `project` is a string if present; `createdAt` is `YYYY-MM-DD`.
+- `tabs` has 1 to 6 entries.
+- `key` is `requirements`, `design`, `plan` or `consult-<slug>` (`^consult-[a-z0-9-]{1,32}$`); keys are unique; when present, requirements comes before design before plan.
+- The key must match the input's kind (an ERROR, not a warning): `requirements` needs `review-html/requirements`, `design` needs `review-html/design`, `plan` needs `review-html/plan`, `consult-*` needs `review-html/doc`. A bundle inside a tab is rejected.
+- `status` is `approved` or `current`. Exactly one tab is `current`, and it is the LAST tab.
+- `approvedAt` (`YYYY-MM-DD`) is required on an approved tab and not allowed on the current tab.
+- `answers` is optional and only allowed on an approved tab. Each key must be a decision ref of that tab's input. Each value is either an option `value` of that decision, the string `other`, or `{ "value": "other", "text": "..." }`
+  (object form: `value` must be `other`; `text` optional, a string of at most 2000 chars; no other field).
+- `input` is required and validated by its own kind's validator; its errors are reported with the path prefixed `$.tabs[i].input`.
+  The inner `docId` may be anything: it is ignored and the bundle's `docId` is used.
+
+Page: the tab bar (labels 要件 / 設計 / 計画 / 相談（<slug>）) sits under the header and stays at the top while scrolling. Status badges: approved = 「承認済み」, current = 「確認中」; the current tab is selected on load.
+Switching tabs keeps the tab bar where it was on screen (no jump to the top of the page). An approved tab shows a box 「承認済み（<approvedAt>）」 with the first sentence of the usual box and no verdict list.
+A `consult-*` tab that is approved shows the badge 「済み」 and the box heading 「回答済み（<approvedAt>）」 instead of 「承認済み」.
+Addresses: the elements of the guide box have their own namespace `g1, g2, ...` (separate counter, e.g. `plan:g1`); a ref matching `^g\d+$` is rejected like `^b\d+$`. The body's auto addresses `b<n>` of a tab are identical whether the tab renders as current or approved and whatever `answers` say (an approved decision uses exactly the same `b<n>` slots as the current one, including the 「その他」 label, which is emitted hidden unless it is the recorded answer). A recorded `other` text has its own address `<tab>:<ref>.other` (refs never contain a dot).
+Decisions on an approved tab are disabled radios showing the recorded `answers` value (else the recommended option) with the note 「承認時の回答」; an `other` answer shows its `text` read-only under the checked 「その他」.
+Decisions on the current tab are interactive as usual. Comments can be made on any tab; the verdict, decisions and note of the answer sheet apply to the current tab only (the sheet title says 「<tab label>について回答する」).
+
+Addresses are namespaced by the tab key: `data-addr="<key>:<addr>"` (`requirements:S1-AC1`, `design:R1`, `plan:P1-1`, `plan:b3`), and `data-label` starts with the tab label (「要件 › 機能要件 S1-AC1」).
+
+The receiver and the port derive from the BUNDLE `docId` (`receiver.mjs ... --doc-id <bundle docId>`), so one task keeps one origin across all its stages and revisions.
+Files: the bundle JSON is `review-<DOC_ID>.json`, each tab's input is `review-<DOC_ID>.<key>.json`, the page is `review-<DOC_ID>.html`.
+
+Autosave (bundle): localStorage key `review-html:<bundle docId>`, blob `{ tabs: { <key>: { contentHash, comments } }, current: { key, contentHash, decisions, verdict, note }, sent }`.
+`contentHash` is per tab (sha256 of that tab's converted document JSON). On load a tab's comments are kept only if that tab's hash matches; the current tab's decisions/verdict/note and `sent` are kept only if the current tab's key AND hash match.
+Each saved comment may carry `sent: true`. Comments are sent once: after a successful send every comment in the answer is marked sent and stored with that flag; later payloads contain only comments not yet sent. The panel still lists sent comments with a small 「送信済み」 label and they cannot be edited or deleted. A tab whose hash changed loses its comments (and their flags) as above.
+So adding a tab or approving one does not discard comments on unchanged tabs. Only when something was actually dropped (comments of a changed or removed tab, or entered input of the current tab: a confirmed decision, a verdict, a note, or a send), the page shows the non-blocking note 「内容が更新されたので、前回の入力は引き継いでいません。」.
+
 ## Answer payload (page -> receiver)
 
 ```
@@ -218,3 +267,24 @@ When a document is re-rendered with different content (a revision), the stored h
 so the saved input is discarded and the revised document starts with fresh input. The page shows the
 non-blocking note 「内容が更新されたので、前回の入力は引き継いでいません。」. Re-rendering identical
 content keeps the hash and therefore keeps the saved input. Corrupt saved JSON is discarded silently.
+
+## Answer payload v3 (bundle pages)
+
+```
+{
+  "kind": "review-html/answer", "version": 3,
+  "docId": "<bundle docId>",
+  "tab": "<current tab key>",
+  "profile": "requirements" | "design" | "plan" | "consult",
+  "verdict": "...",
+  "decisions": { ... },
+  "comments": [ { "tab": "design", "addr": "design:R1", "label": "設計 › リスク R1", "quote": "...", "prefix": "...", "suffix": "...", "text": "..." } ],
+  "note": "...",
+  "sentAt": "ISO-8601"
+}
+```
+
+- `tab`, `profile`, `verdict`, `decisions` and `note` refer to the CURRENT tab only. `decisions` has the same shape as in version 2.
+- `comments` holds only comments not sent in an earlier answer (sent-once); an answer after everything was sent has `comments: []`.
+- Each comment carries its own `tab` and a namespaced `addr`; comments may belong to any tab (including approved ones, which are follow-up remarks).
+- The receiver is unchanged: it checks only `kind === "review-html/answer"` and `docId`. Non-bundle pages keep sending version 2.
