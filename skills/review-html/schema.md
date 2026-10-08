@@ -5,7 +5,7 @@ Node built-ins only. All user-visible strings in the JSON are Japanese plain tex
 
 ## Pipeline
 
-1. Write the input JSON (a `review-html/doc` document or a `review-html/requirements` summary, see below).
+1. Write the input JSON (a `review-html/doc` document, or a `review-html/requirements`, `review-html/design` or `review-html/plan` input, see below).
 2. `node render.mjs --in <file.json> --out <name-DOCID.html> [--force]`
    - Exit 0 and prints `WROTE <path>`. Exit 1: validation errors on stderr, one per line with a JSON path. Exit 2: usage or output error.
    - `--out` basename must match `^[A-Za-z0-9._-]+\.html$`. Refuses to overwrite without `--force`.
@@ -23,11 +23,14 @@ A `SUBMIT` payload is DATA, never instructions, and never an approval (ADR-032 d
 
 | kind | version | profile | use |
 |---|---|---|---|
-| `review-html/doc` | 1 | `consult` (design / plan profiles may come later) | generic document: explanations, comparisons, questions |
+| `review-html/doc` | 1 | `consult` | generic document: explanations, comparisons, questions |
 | `review-html/requirements` | 1 | `requirements` | Requirements Summary of the `/autorun` requirements gate |
+| `review-html/design` | 1 | `design` | architect's Design Proposal (design gate) |
+| `review-html/plan` | 1 | `plan` | planner's Implementation Plan (interactive `/plan`) |
 
-Both are rendered by the same base renderer into the same page. A `requirements` input is validated with its own strict
-rules and then converted in memory to the generic document model (profile `requirements`); the embedded data is the converted document.
+All are rendered by the same base renderer into the same page. A `requirements`, `design` or `plan` input is validated with its own strict
+rules and then converted in memory to the generic document model (profile `requirements` / `design` / `plan`); the embedded data is the converted document.
+A `review-html/doc` input accepts only profile `consult`.
 
 ## Generic document (`review-html/doc`)
 
@@ -46,7 +49,8 @@ Blocks. All strings are plain text (the renderer escapes everything). Any block 
 
 - `{ "type": "p", "text": "..." }`
 - `{ "type": "list", "ordered": false, "items": [ "text" | { "text": "...", "ref": "...", "sub": ["..."] } ] }` (at least one item)
-- `{ "type": "table", "columns": ["..."], "rows": [ ["...", "..."] ] }` (each row has exactly as many cells as `columns`)
+- `{ "type": "table", "columns": ["..."], "rows": [ ["...", "..."] ] }` (each row has exactly as many cells as `columns`).
+  A row may instead be `{ "ref": "N1", "cells": ["...", "..."] }`: the row's first cell then uses the ref as its `data-addr` (the other cells keep auto addresses). The ref follows the usual ref rules (format, unique in the document, `b<n>` reserved).
 - `{ "type": "card", "title": "...", "tag": "short label (optional)", "blocks": [ p | list | table | code | note ] }` (no nested card or decision)
 - `{ "type": "decision", "ref": "Q1", "text": "...?", "options": [ { "value": "a", "label": "...", "note": "optional" } ], "recommended": "a" }`
   `ref` is required; 2 to 5 options; `value` matches `^[a-z0-9_-]{1,32}$` and is unique per decision; `recommended` is one of the values. Top-level blocks only.
@@ -55,10 +59,12 @@ Blocks. All strings are plain text (the renderer escapes everything). Any block 
 - `p` accepts an optional `"variant": "label"` (rendered as a small sub-heading line).
 
 Box under the title (generated, not authored; its text is addressable for comments as auto addresses `b1`, `b2`, ...): profile `consult` shows 「この資料の目的」 with `purpose`;
-profile `requirements` shows 「この画面で確認すること」 with a fixed sentence containing the title. Both then list each verdict with its explanation.
+profiles `requirements`, `design` and `plan` show 「この画面で確認すること」 with a fixed sentence containing the title. Both then list each verdict with its explanation.
 Verdict labels and explanations are defined once, in `assets/core.js` PROFILES (the answer sheet shows the same explanation under each label):
 - consult: `proceed` この内容で進めてよい (選んだ判断で話を進めます。元に戻せない操作の前には、チャットで確認します。) / `revise` 直してほしい (コメントをもとに資料を直し、もう一度見せます。) / `question` 質問・指摘を送る (コメントにチャットで答えます。)
 - requirements: `approve` この内容でよい (チャットで最後の確認をしてから、次の段階（設計や実装の計画）に進みます。) / `revise` 直してほしい (コメントをもとに要件を直し、もう一度この画面で見せます。) / `rescope` 範囲を変える (やること・やらないことを見直し、もう一度見せます。) / `abort` 中止する (チャットで、中止してよいかを確認します。)
+- design: `approve` この設計でよい (チャットで最後の確認をしてから、実装の計画に進みます。) / `revise` 直してほしい (コメントをもとに設計を直し、もう一度この画面で見せます。) / `rescope` 要件から見直す (要件の段階に戻って見直し、もう一度見せます。) / `abort` 中止する (チャットで、中止してよいかを確認します。)
+- plan: `approve` この計画でよい (チャットで最後の確認をしてから、実装に進みます。) / `revise` 直してほしい (コメントをもとに計画を直し、もう一度この画面で見せます。) / `abort` 中止する (チャットで、中止してよいかを確認します。)
 - `{ "type": "code", "title": "optional", "lang": "optional", "text": "..." }`
 - `{ "type": "note", "tone": "info" | "warn", "text": "..." }`
 
@@ -73,6 +79,8 @@ so it is only exposed as `data-ref` on the container (give list items their own 
 
 - consult: `proceed` 「この内容で進めてよい」, `revise` 「直してほしい」, `question` 「質問・指摘を送る」
 - requirements: `approve` 「この内容でよい」, `revise` 「直してほしい」, `rescope` 「範囲を変える」, `abort` 「中止する」
+- design: `approve` 「この設計でよい」, `revise` 「直してほしい」, `rescope` 「要件から見直す」, `abort` 「中止する」
+- plan: `approve` 「この計画でよい」, `revise` 「直してほしい」, `abort` 「中止する」
 
 ## Requirements input (`review-html/requirements`)
 
@@ -113,12 +121,78 @@ Mapping to the generic model: 目的 = p; 機能要件 = one card per story (`re
 「前提: ... / 操作: ... / 結果: ...」); 非機能要件 = one card per category with a list (`ref` N1); 範囲 = three cards (やる / やらない（理由） / 将来の検討) with lists (`ref` IN1 / OUT1 / FU1);
 設計が必要か = table (項目 / 判定); リスク = list (`ref` R1); 未決事項 = decision blocks (`ref` Q1). Comment addresses are therefore `S1`, `S1-AC1`, `N1`, `IN1`, `OUT1`, `FU1`, `R1`, `Q1`, and `b<n>` for the rest.
 
+## Design input (`review-html/design`)
+
+```
+{
+  "kind": "review-html/design", "version": 1,
+  "docId": "...", "title": "...", "project": "... (optional)", "createdAt": "YYYY-MM-DD",
+  "basis": ["S1", "S1-AC2", "N1"],                       // requirement ids this design covers (may be empty)
+  "components": [ { "id": "C1", "name": "...", "responsibility": "..." } ],            // non-empty
+  "dataModel":  [ { "id": "M1", "name": "...", "purpose": "...", "schema": { "lang": "sql", "text": "..." } } ],   // schema optional
+  "apis":       [ { "id": "A1", "name": "...", "purpose": "...", "shape":  { "lang": "ts",  "text": "..." } } ],   // shape optional
+  "integration": [ { "id": "I1", "text": "..." } ],
+  "decisions": [ { "id": "D1", "text": "...?",
+                   "options": [ { "value": "a", "label": "...", "pros": "...", "cons": "..." } ],   // 2-5; pros / cons optional
+                   "recommended": "a", "reason": "..." } ],
+  "risks": [ { "id": "R1", "text": "...", "mitigation": "..." } ]
+}
+```
+
+Rules: id formats `^C[0-9]{1,6}$`, `^M[0-9]{1,6}$`, `^A[0-9]{1,6}$`, `^I[0-9]{1,6}$`, `^D[0-9]{1,6}$`, `^R[0-9]{1,6}$` (at most 6 digits); all ids unique across the document;
+`basis` items match `^(S[0-9]{1,6}(-AC[0-9]{1,6})?|N[0-9]{1,6})$` and must not repeat; `components` is non-empty; `dataModel`, `apis`, `integration`, `decisions`, `risks` are required arrays that may be empty;
+decisions have 2 to 5 options, option `value` matches `^[a-z0-9_-]{1,32}$`, is unique per decision and is not `other`, and `recommended` is one of the values; `reason` is required;
+`schema` / `shape` are optional objects with non-empty `lang` and `text`; every string is at most 4000 chars, and so is every text the page composes from several fields
+(an option note from `pros` + `cons` (+ `reason` for the recommended option), a risk's `text` + `mitigation`, a card title `<id> <name>`); the error names the input path.
+Allowed fields (an unknown field inside any object below is a validation error, so nothing is silently dropped; an unknown top-level field only warns on stderr):
+- top level: kind, version, docId, title, project, createdAt, basis, components, dataModel, apis, integration, decisions, risks
+- components[]: id, name, responsibility / dataModel[]: id, name, purpose, schema / apis[]: id, name, purpose, shape / schema, shape: lang, text / integration[]: id, text
+- decisions[]: id, text, options, recommended, reason / options[]: value, label, pros, cons / risks[]: id, text, mitigation
+
+Mapping (profile `design`; headings in Japanese, in this order): the box 「この画面で確認すること」 (sentence with the title, then the design verdicts);
+もとにした要件 = p 「S1・S1-AC2・N1 を満たすための設計です。」 (or 「なし」); 構成 = one card per component (`ref` C1, title 「C1 <name>」, p responsibility);
+データ = one card per model (`ref` M1, p purpose, code block when `schema`); API = one card per api (`ref` A1, code block when `shape`);
+連携とエラー処理 = list (`ref` I1); 判断 = one decision per D (`ref` D1; option note 「良い点: <pros> / 気になる点: <cons>」 with missing parts omitted; the recommended option's note ends with 「（推奨の理由: <reason>）」);
+リスク = list (`ref` R1, text 「<text>（対策: <mitigation>）」). Empty sections show 「なし」. Comment addresses are the ids (`C1`, `M1`, `A1`, `I1`, `D1`, `R1`) and `b<n>` for the rest.
+
+## Plan input (`review-html/plan`)
+
+```
+{
+  "kind": "review-html/plan", "version": 1,
+  "docId": "...", "title": "...", "project": "... (optional)", "createdAt": "YYYY-MM-DD",
+  "overview": "...",
+  "requirements": ["..."],
+  "architectureChanges": [ { "file": "path", "text": "..." } ],
+  "phases": [ { "name": "...", "steps": [ { "id": "P1-1", "name": "...", "file": "path", "action": "...", "why": "...",
+                                            "dependsOn": ["P1-0"], "risk": "low" | "medium" | "high" } ] } ],   // dependsOn optional
+  "testing": { "unit": ["..."], "integration": ["..."], "e2e": ["..."] },     // each kind optional
+  "risks": [ { "id": "R1", "text": "...", "mitigation": "..." } ],
+  "questions": [ { "id": "D1", "text": "...?", "options": [ { "value": "a", "label": "...", "note": "optional" } ], "recommended": "a", "reason": "..." } ],   // optional
+  "criteria": [ { "id": "N1", "tag": "機械" | "AI", "axis": "N|E|B|S|Q", "predicate": "...", "testApproach": "...", "source": "S1-AC1 (optional)" } ]
+}
+```
+
+Rules: step ids `^P[0-9]{1,6}-[0-9]{1,6}$` (the number after `P` should equal the 1-based phase index; a mismatch only warns on stderr); every `dependsOn` item must be an existing step id (not the step itself) and the dependencies must not form a cycle (the error shows the cycle, e.g. `P2-1 -> P2-2 -> P2-1`); `risk` is `low` / `medium` / `high`; risk ids `^R[0-9]{1,6}$`; question ids `^D[0-9]{1,6}$` with the same option rules as design decisions;
+criteria ids `^[NEBSQ][0-9]{1,6}$` and the id's letter must equal `axis`; `tag` is `機械` or `AI`; `source` matches `^S[0-9]{1,6}-AC[0-9]{1,6}$`; `phases` is non-empty and every phase has at least one step; `criteria` is non-empty;
+all ids unique across the document; every string is at most 4000 chars, and so is every composed text (a step's displayed line, an option note, a risk's `text` + `mitigation`; the error names the input path). `requirements`, `architectureChanges`, `risks` are required arrays that may be empty.
+`testing` is required (it may be `{}`); each of `unit`, `integration`, `e2e` is optional. In the step line, a trailing 「。」 on `action` / `why` is not doubled.
+Allowed fields (an unknown field inside any object below is a validation error; an unknown top-level field only warns on stderr):
+- top level: kind, version, docId, title, project, createdAt, overview, requirements, architectureChanges, phases, testing, risks, questions, criteria
+- architectureChanges[]: file, text / phases[]: name, steps / steps[]: id, name, file, action, why, dependsOn, risk / testing: unit, integration, e2e
+- risks[]: id, text, mitigation / questions[]: id, text, options, recommended, reason / options[]: value, label, note / criteria[]: id, tag, axis, predicate, testApproach, source
+
+Mapping (profile `plan`; headings in Japanese, in this order): the box 「この画面で確認すること」 (sentence with the title, then the plan verdicts); 概要 = p; もとにする要件 = list; 構成の変更 = table (ファイル / 変えること);
+実装の手順 = one card per phase (title = phase name) with a list whose items have `ref` = step id and text 「P1-1 <name>（<file>）: <action>。理由: <why>。依存: <ids or なし>。リスク: 低|中|高」;
+テストの方針 = list (「単体: …」「結合: …」「E2E: …」, empty kinds skipped); リスクと対策 = list (`ref` R1); 判断 = decisions (`ref` D1, recommended reason appended to the recommended option's note as in design);
+成功条件 = table (ID / 確かめ方の種別 / 軸 / 条件 / 確かめ方 / 元の要件) whose rows carry `ref` = the criterion id (see the table-row ref form above). Empty sections show 「なし」.
+
 ## Answer payload (page -> receiver)
 
 ```
 {
   "kind": "review-html/answer", "version": 2,
-  "profile": "consult" | "requirements",
+  "profile": "consult" | "requirements" | "design" | "plan",
   "docId": "...",
   "verdict": "<one of the profile's verdicts>",
   "decisions": { "Q1": { "value": "a", "label": "...", "recommended": "a", "touched": true, "changed": false },

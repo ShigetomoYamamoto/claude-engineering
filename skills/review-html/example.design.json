@@ -1,0 +1,48 @@
+{
+  "kind": "review-html/design",
+  "version": 1,
+  "docId": "example-room-precreate-design",
+  "title": "ルーム事前作成",
+  "project": "DWAI-app",
+  "createdAt": "2026-10-08",
+  "basis": ["S1", "S1-AC1", "N1"],
+  "components": [
+    { "id": "C1", "name": "ルーム作成 API", "responsibility": "開催日つきのルーム作成を受け付け、状態「準備中」で保存する" },
+    { "id": "C2", "name": "公開ジョブ", "responsibility": "開催日の朝に、準備中のルームを「公開中」に切り替える" }
+  ],
+  "dataModel": [
+    {
+      "id": "M1",
+      "name": "rooms テーブル",
+      "purpose": "ルームの開催日と状態（準備中・公開中）を持つ",
+      "schema": { "lang": "sql", "text": "ALTER TABLE rooms\n  ADD COLUMN scheduled_on DATE NULL,\n  ADD COLUMN status VARCHAR(16) NOT NULL DEFAULT 'open';" }
+    }
+  ],
+  "apis": [
+    {
+      "id": "A1",
+      "name": "POST /rooms",
+      "purpose": "ルームを作成する。開催日を指定すると「準備中」で作られる",
+      "shape": { "lang": "ts", "text": "// request\n{ name: string; scheduledOn?: string } // YYYY-MM-DD\n// response 201\n{ id: string; status: 'preparing' | 'open' }" }
+    }
+  ],
+  "integration": [
+    { "id": "I1", "text": "開催日が過去の日付なら 400 を返し、ルームは作らない" },
+    { "id": "I2", "text": "公開ジョブが失敗したときは再試行し、3 回失敗したらリーダーに通知する" }
+  ],
+  "decisions": [
+    {
+      "id": "D1",
+      "text": "開催日の朝に公開する仕組みは、どちらにしますか？",
+      "options": [
+        { "value": "job", "label": "定期ジョブで状態を切り替える", "pros": "既存のジョブ基盤で作れる", "cons": "切り替えまで最大 1 分遅れる" },
+        { "value": "query", "label": "一覧を出すときに開催日で絞る", "pros": "遅れがなく、ジョブが要らない", "cons": "一覧の問い合わせが重くなる" }
+      ],
+      "recommended": "job",
+      "reason": "一覧の表示速度を守れるため"
+    }
+  ],
+  "risks": [
+    { "id": "R1", "text": "既存のルーム一覧が、状態の追加で想定外の表示になる", "mitigation": "一覧は「公開中」だけを出すように絞り、既存データは公開中として移行する" }
+  ]
+}

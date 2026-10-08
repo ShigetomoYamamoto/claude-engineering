@@ -30,6 +30,21 @@
         { value: 'rescope', label: '範囲を変える', explain: 'やること・やらないことを見直し、もう一度見せます。' },
         { value: 'abort', label: '中止する', explain: 'チャットで、中止してよいかを確認します。' }
       ]
+    },
+    design: {
+      verdicts: [
+        { value: 'approve', label: 'この設計でよい', explain: 'チャットで最後の確認をしてから、実装の計画に進みます。' },
+        { value: 'revise', label: '直してほしい', explain: 'コメントをもとに設計を直し、もう一度この画面で見せます。' },
+        { value: 'rescope', label: '要件から見直す', explain: '要件の段階に戻って見直し、もう一度見せます。' },
+        { value: 'abort', label: '中止する', explain: 'チャットで、中止してよいかを確認します。' }
+      ]
+    },
+    plan: {
+      verdicts: [
+        { value: 'approve', label: 'この計画でよい', explain: 'チャットで最後の確認をしてから、実装に進みます。' },
+        { value: 'revise', label: '直してほしい', explain: 'コメントをもとに計画を直し、もう一度この画面で見せます。' },
+        { value: 'abort', label: '中止する', explain: 'チャットで、中止してよいかを確認します。' }
+      ]
     }
   };
 
