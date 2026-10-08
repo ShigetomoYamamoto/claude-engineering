@@ -1,0 +1,76 @@
+{
+  "kind": "review-html/doc",
+  "version": 1,
+  "profile": "consult",
+  "docId": "example-consult-cache",
+  "title": "一覧画面の表示を速くする方法",
+  "project": "DWAI-app",
+  "createdAt": "2026-10-08",
+  "purpose": "一覧画面が遅い原因と、直し方の案をまとめました。気になる所は文章を選んでコメントしてください。",
+  "sections": [
+    {
+      "heading": "結論",
+      "blocks": [
+        { "type": "p", "text": "遅い原因は、一覧を開くたびに全件を読み直していることです。結果を一時保存する方法を推奨します。" },
+        { "type": "note", "tone": "info", "text": "画面の見た目は変わりません。変わるのは表示までの待ち時間だけです。" }
+      ]
+    },
+    {
+      "heading": "調べたこと",
+      "ref": "findings",
+      "blocks": [
+        {
+          "type": "list",
+          "ordered": false,
+          "items": [
+            "一覧を開くと、毎回データベースに 120 回問い合わせている",
+            { "text": "問い合わせの大半は同じ内容の繰り返し", "ref": "dup", "sub": ["ルーム情報を 1 件ずつ読んでいる", "参加者数を 1 件ずつ数えている"] }
+          ]
+        },
+        {
+          "type": "table",
+          "columns": ["画面", "今の表示時間", "目標"],
+          "rows": [["ルーム一覧", "3.2 秒", "1 秒以内"], ["参加者一覧", "1.1 秒", "1 秒以内"]]
+        }
+      ]
+    },
+    {
+      "heading": "案の比較",
+      "blocks": [
+        {
+          "type": "card",
+          "title": "案 A: 結果を一時保存する",
+          "tag": "推奨",
+          "blocks": [
+            { "type": "p", "text": "同じ問い合わせの結果を 60 秒だけ保存して使い回します。" },
+            { "type": "list", "items": ["変更が小さい", "最大 60 秒古い表示になる可能性がある"] }
+          ]
+        },
+        {
+          "type": "card",
+          "title": "案 B: 問い合わせを 1 回にまとめる",
+          "blocks": [
+            { "type": "p", "text": "120 回の問い合わせを、まとめて読む 1 回に書き換えます。" },
+            { "type": "code", "title": "変更のイメージ", "lang": "sql", "text": "SELECT room_id, COUNT(*) FROM members GROUP BY room_id;" }
+          ]
+        }
+      ]
+    },
+    {
+      "heading": "決めたいこと",
+      "blocks": [
+        {
+          "type": "decision",
+          "ref": "Q1",
+          "text": "どちらの案で進めますか？",
+          "options": [
+            { "value": "cache", "label": "案 A（一時保存）", "note": "早く直せる" },
+            { "value": "batch", "label": "案 B（まとめて読む）", "note": "根本的に直る" }
+          ],
+          "recommended": "cache"
+        },
+        { "type": "note", "tone": "warn", "text": "案 B は影響範囲が広いため、テストの追加が必要です。" }
+      ]
+    }
+  ]
+}

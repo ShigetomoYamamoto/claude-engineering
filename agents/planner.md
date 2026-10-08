@@ -118,6 +118,8 @@ without codebase context.
 Carry the same ID forward from any upstream acceptance criterion
 (`requirements-analyst`/`task-analyst`) through to whichever test proves it — this table
 is not re-derived from scratch when acceptance criteria already exist upstream.
+
+For `requirements-analyst` ids, carrying forward means citing the criterion id (`S1-AC1` …) next to the predicate (for example in Test approach: `← S1-AC1`); the predicate keeps its own axis ID. The analyst's `S*` / `N*` / `Q*` ids are requirement ids and are never reused as predicate IDs.
 `agents/tdd-guide.md` **adopts this table directly** as its done-condition; it does not
 author its own.
 

@@ -1,0 +1,39 @@
+{
+  "kind": "review-html/requirements",
+  "version": 1,
+  "docId": "example-room-precreate",
+  "title": "ルーム事前作成",
+  "project": "DWAI-app",
+  "createdAt": "2026-10-08",
+  "goal": "ルームリーダーが、開催前にルームを作っておけるようにする。",
+  "stories": [
+    {
+      "id": "S1",
+      "role": "ルームリーダー",
+      "action": "開催日より前にルームを作成する",
+      "outcome": "当日の準備時間を減らす",
+      "criteria": [
+        { "id": "S1-AC1", "given": "ログイン済みのリーダーがいる", "when": "開催日を指定してルームを作成する", "then": "ルームが「準備中」で一覧に出る" }
+      ]
+    }
+  ],
+  "nfr": [ { "id": "N1", "category": "性能", "text": "ルーム作成は 2 秒以内に完了する" } ],
+  "scope": {
+    "in": [ { "id": "IN1", "text": "ルームの事前作成" } ],
+    "out": [ { "id": "OUT1", "text": "参加者への自動通知", "reason": "別の要件で扱うため" } ],
+    "future": [ { "id": "FU1", "text": "ルームの複製" } ]
+  },
+  "designNeeded": { "dbSchema": false, "api": true, "techStack": false, "boundary": false, "value": true },
+  "risks": [ { "id": "R1", "text": "既存のルーム一覧の表示が変わる可能性がある" } ],
+  "questions": [
+    {
+      "id": "Q1",
+      "text": "事前作成したルームは、開催日まで参加者に見せますか？",
+      "options": [
+        { "value": "hidden", "label": "見せない", "note": "開催日の朝に公開される" },
+        { "value": "visible", "label": "見せる" }
+      ],
+      "recommended": "hidden"
+    }
+  ]
+}
