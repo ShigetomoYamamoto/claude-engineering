@@ -94,6 +94,8 @@
   textarea:focus { border-color: var(--accent); outline: none; box-shadow: 0 0 0 3px var(--accent-soft); }
   .pop textarea { min-height: 84px; }
   .pop-foot { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-top: 10px; }
+  .pop-hint { margin: 8px 0 0; font-size: .78rem; color: var(--muted); }
+  .cm-sent { font-size: .72rem; color: var(--muted); border: 1px solid var(--line); border-radius: 999px; padding: 1px 8px; }
   .pop-key { font-size: .72rem; color: var(--muted); }
   .pop-btns { display: flex; gap: 8px; margin-left: auto; }
   .pop.is-sheet { left: 0 !important; right: 0; top: auto !important; bottom: var(--keyboard-inset); width: 100%; max-width: none; border-radius: 16px 16px 0 0; border-width: 1px 0 0; padding: 14px 14px calc(14px + env(safe-area-inset-bottom)); max-height: calc(100vh - var(--keyboard-inset) - 16px); overflow: auto; }
@@ -198,6 +200,7 @@
   .chip.done { color: var(--ok); border-color: var(--ok); }
   p.q { font-weight: 600; margin: 0 0 10px; }
   label.opt { display: flex; align-items: flex-start; gap: 10px; border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; margin-bottom: 8px; min-height: 44px; cursor: pointer; background: var(--bg); }
+  label.opt[hidden] { display: none; }
   label.opt:has(input:checked) { border-color: var(--accent); background: var(--accent-soft); }
   label.opt input { accent-color: var(--accent); width: 16px; height: 16px; margin: 5px 0 0; flex: none; }
   .optbody { min-width: 0; flex: 1; }
@@ -223,3 +226,20 @@
   .vx { font-size: .8rem; font-weight: 400; color: var(--muted); line-height: 1.5; }
   .other-ta { margin: -2px 0 8px; min-height: 76px; }
   .other-ta[hidden] { display: none; }
+
+  /* ===== bundle (tabs) ===== */
+  .tabbar { position: sticky; top: 0; z-index: 35; background: var(--bg); margin: 0 0 16px; padding: 6px 0 0; border-bottom: 1px solid var(--line); font-family: var(--ui); }
+  .tablist { display: flex; gap: 4px; overflow-x: auto; }
+  .tab { flex: none; display: inline-flex; align-items: center; gap: 6px; height: 40px; padding: 0 14px; border: 1px solid transparent; border-bottom: 0; border-radius: 10px 10px 0 0; background: transparent; color: var(--muted); font: 600 .9rem/1 var(--ui); cursor: pointer; white-space: nowrap; }
+  .tab:hover { background: var(--later-soft); color: var(--fg); }
+  .tab[aria-selected="true"] { background: var(--card); color: var(--fg); border-color: var(--line); box-shadow: inset 0 -3px 0 var(--accent); }
+  .tab:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+  .tab-badge { font-size: .68rem; font-weight: 600; padding: 2px 7px; border-radius: 999px; border: 1px solid var(--line); }
+  .tab-badge.approved { color: var(--ok); border-color: var(--ok); background: var(--ok-soft); }
+  .tab-badge.current { color: var(--accent); border-color: var(--accent); background: var(--accent-soft); }
+  .tabpanel:focus { outline: none; }
+  .guide.guide-approved { border-left-color: var(--ok); padding-bottom: 4px; }
+  .dcard-approved .chip { color: var(--ok); border-color: var(--ok); }
+  .dcard-approved label.opt { cursor: default; opacity: .9; }
+  .cm-group { margin: 0; padding: 8px 16px; font-size: .78rem; color: var(--muted); background: var(--later-soft); border-bottom: 1px solid var(--line); }
+  .other-text { margin: -2px 0 8px 28px; padding: 8px 10px; border: 1px solid var(--line); border-radius: 8px; background: var(--later-soft); white-space: pre-wrap; font-size: .9rem; }

@@ -1,6 +1,7 @@
 // review-html renderer: review document JSON -> one self-contained HTML file.
 //   node render.mjs --in <file.json> --out <name.html> [--force]
-// Input kinds: review-html/doc (generic, profile "consult") and review-html/requirements (adapter -> doc).
+// Input kinds: review-html/doc (generic, profile "consult") and the adapters review-html/requirements,
+// review-html/design and review-html/plan (each converted in memory to a generic doc).
 // Exit codes: 0 ok, 1 validation/input error (details on stderr), 2 usage/output error.
 import crypto from 'node:crypto';
 import fs from 'node:fs';
@@ -12,6 +13,9 @@ const here = path.dirname(fileURLToPath(import.meta.url));
 const core = createRequire(import.meta.url)('./assets/core.js');
 const REQ_KIND = 'review-html/requirements';
 const DOC_KIND = 'review-html/doc';
+const DESIGN_KIND = 'review-html/design';
+const PLAN_KIND = 'review-html/plan';
+const BUNDLE_KIND = 'review-html/bundle';
 const OUT_RE = /^[A-Za-z0-9._-]+\.html$/;
 const MAX_STR = 2000;      // requirements input
 const DOC_MAX_STR = 4000;  // generic document
@@ -170,7 +174,7 @@ export function validateDoc(data, profiles = ['consult']) {
     const v = o.ref;
     if (v === undefined) { if (required) err(`${p}.ref`, 'required'); return; }
     if (typeof v !== 'string' || !REF_RE.test(v)) { err(`${p}.ref`, `must match ${REF_RE}`); return; }
-    if (/^b\d+$/.test(v)) { err(`${p}.ref`, `"${v}" is reserved for auto addresses (b1, b2, ...); choose another ref`); return; }
+    if (/^[bg]\d+$/.test(v)) { err(`${p}.ref`, `"${v}" is reserved for auto addresses (b1, b2, ... and g1, g2, ...); choose another ref`); return; }
     if (refs.has(v)) err(`${p}.ref`, `duplicate ref "${v}" (also at ${refs.get(v)})`);
     else refs.set(v, `${p}.ref`);
   };
@@ -240,9 +244,14 @@ export function validateDoc(data, profiles = ['consult']) {
         if (!Array.isArray(b.rows)) { err(`${p}.rows`, 'must be an array'); break; }
         b.rows.forEach((r, i) => {
           const rp = `${p}.rows[${i}]`;
-          if (!Array.isArray(r)) { err(rp, 'must be an array'); return; }
-          if (cols && r.length !== cols.length) err(rp, `must have ${cols.length} cells (has ${r.length})`);
-          r.forEach((c, j) => { if (typeof c !== 'string') err(`${rp}[${j}]`, 'must be a string'); });
+          let cells = r, cp = rp;
+          if (isObj(r)) { // row with its own address: { ref, cells: [...] }
+            known(r, ['ref', 'cells'], rp); ref(r, rp, true);
+            cells = r.cells; cp = `${rp}.cells`;
+          }
+          if (!Array.isArray(cells)) { err(cp, 'must be an array'); return; }
+          if (cols && cells.length !== cols.length) err(cp, `must have ${cols.length} cells (has ${cells.length})`);
+          cells.forEach((c, j) => { if (typeof c !== 'string') err(`${cp}[${j}]`, 'must be a string'); });
         });
         break;
       }
@@ -364,13 +373,471 @@ export function requirementsToDoc(d) {
   return doc;
 }
 
+// ---------- design / plan input validation (shared helpers) ----------
+const OPT_VALUE_RE = /^[a-z0-9_-]{1,32}$/;
+function makeCheck() {
+  const errors = [];
+  const warnings = [];
+  const ids = new Map();
+  const err = (p, m) => errors.push(`${p}: ${m}`);
+  const c = {
+    errors, warnings, err,
+    obj: (v, p) => { if (!isObj(v)) { err(p, 'must be an object'); return false; } return true; },
+    known: (o, allowed, p, strict = true) => {
+      for (const k of Object.keys(o)) {
+        if (allowed.includes(k)) continue;
+        if (strict) err(`${p}.${k}`, `unknown field (allowed: ${allowed.join(', ')})`);
+        else warnings.push(`${p}.${k}: unknown field (ignored)`);
+      }
+    },
+    // Composed text (what the page will actually show) must stay within the string limit; report at the input path.
+    fits: (text, p, what) => { if (text.length > DOC_MAX_STR) err(p, `${what} is ${text.length} chars when composed; at most ${DOC_MAX_STR}`); },
+    str: (o, k, p, required = true) => {
+      const v = o[k];
+      if (v === undefined) { if (required) err(`${p}.${k}`, 'required'); return; }
+      if (typeof v !== 'string' || (required && v.trim() === '')) err(`${p}.${k}`, 'must be a non-empty string');
+    },
+    arr: (o, k, p, required = true) => {
+      const v = o[k];
+      if (v === undefined) { if (required) err(`${p}.${k}`, 'required'); return []; }
+      if (!Array.isArray(v)) { err(`${p}.${k}`, 'must be an array'); return []; }
+      return v;
+    },
+    id: (o, p, re, what) => {
+      const v = o.id;
+      if (typeof v !== 'string' || !re.test(v)) { err(`${p}.id`, `must match ${what}`); return false; }
+      if (ids.has(v)) { err(`${p}.id`, `duplicate id "${v}" (also at ${ids.get(v)})`); return false; }
+      ids.set(v, `${p}.id`);
+      return true;
+    },
+    header(data, kind, allowedKeys) {
+      (function walk(v, p) {
+        if (typeof v === 'string') { if (v.length > DOC_MAX_STR) err(p, `string longer than ${DOC_MAX_STR} chars`); }
+        else if (Array.isArray(v)) v.forEach((x, i) => walk(x, `${p}[${i}]`));
+        else if (isObj(v)) for (const k of Object.keys(v)) walk(v[k], `${p}.${k}`);
+      })(data, '$');
+      if (!c.obj(data, '$')) return false;
+      c.known(data, allowedKeys, '$', false);
+      if (data.kind !== kind) err('$.kind', `must be "${kind}"`);
+      if (data.version !== 1) err('$.version', 'must be 1');
+      if (typeof data.docId !== 'string' || !/^[a-z0-9-]{3,64}$/.test(data.docId)) err('$.docId', 'must match [a-z0-9-]{3,64}');
+      c.str(data, 'title', '$');
+      c.str(data, 'project', '$', false);
+      if (typeof data.createdAt !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(data.createdAt)) err('$.createdAt', 'must be YYYY-MM-DD');
+      return true;
+    },
+    // A decision / question: id, text, options (2-5), recommended, reason. `extra` = option fields besides value/label.
+    decision(q, p, idRe, idWhat, extra, noteOf) {
+      c.known(q, ['id', 'text', 'options', 'recommended', 'reason'], p);
+      c.id(q, p, idRe, idWhat);
+      c.str(q, 'text', p);
+      c.str(q, 'reason', p);
+      const opts = c.arr(q, 'options', p);
+      if (Array.isArray(q.options) && (opts.length < 2 || opts.length > 5)) err(`${p}.options`, 'must have 2 to 5 options');
+      const values = new Set();
+      opts.forEach((o, j) => {
+        const op = `${p}.options[${j}]`;
+        if (!c.obj(o, op)) return;
+        c.known(o, ['value', 'label', ...extra], op);
+        if (typeof o.value !== 'string' || !OPT_VALUE_RE.test(o.value)) err(`${op}.value`, 'must match ^[a-z0-9_-]{1,32}$');
+        else if (o.value === core.OTHER_VALUE) err(`${op}.value`, `"${core.OTHER_VALUE}" is reserved (the page adds 「${core.OTHER_LABEL}」 itself)`);
+        else if (values.has(o.value)) err(`${op}.value`, `duplicate option value "${o.value}"`);
+        else values.add(o.value);
+        c.str(o, 'label', op);
+        for (const k of extra) c.str(o, k, op, false);
+      });
+      if (typeof q.recommended !== 'string' || !values.has(q.recommended)) err(`${p}.recommended`, 'must be one of options[].value');
+      opts.forEach((o, j) => {
+        if (!isObj(o) || ![...extra, 'label'].every((k) => o[k] === undefined || typeof o[k] === 'string') || typeof q.reason !== 'string') return;
+        c.fits(composeNote(o, q, noteOf), `${p}.options[${j}]`, 'option note');
+      });
+    },
+    risks(data) {
+      c.arr(data, 'risks', '$').forEach((r, i) => {
+        const p = `$.risks[${i}]`;
+        if (!c.obj(r, p)) return;
+        c.known(r, ['id', 'text', 'mitigation'], p);
+        c.id(r, p, /^R[0-9]{1,6}$/, '^R[0-9]{1,6}$');
+        c.str(r, 'text', p); c.str(r, 'mitigation', p);
+        if (typeof r.text === 'string' && typeof r.mitigation === 'string') c.fits(riskText(r), p, 'risk text');
+      });
+    }
+  };
+  return c;
+}
+
+// ---------- composed texts (shared by validation and the adapters) ----------
+const stripDot = (s) => s.replace(/。+$/, '');
+const designNote = (o) => [o.pros ? `良い点: ${o.pros}` : '', o.cons ? `気になる点: ${o.cons}` : ''].filter(Boolean).join(' / ');
+const planNote = (o) => o.note || '';
+function composeNote(o, q, noteOf) {
+  const note = noteOf(o);
+  return o.value === q.recommended ? `${note}（推奨の理由: ${q.reason}）` : note;
+}
+const riskText = (r) => `${r.text}（対策: ${r.mitigation}）`;
+const cardTitle = (x) => `${x.id} ${x.name}`;
+const RISK_JA = { low: '低', medium: '中', high: '高' };
+const stepLine = (s) => `${s.id} ${s.name}（${s.file}）: ${stripDot(s.action)}。理由: ${stripDot(s.why)}。依存: ${s.dependsOn && s.dependsOn.length ? s.dependsOn.join('・') : 'なし'}。リスク: ${RISK_JA[s.risk]}`;
+
+// ---------- design input validation ----------
+export function validateDesign(data) {
+  const c = makeCheck();
+  const { err } = c;
+  if (!c.header(data, DESIGN_KIND, ['kind', 'version', 'docId', 'title', 'project', 'createdAt', 'basis', 'components', 'dataModel', 'apis', 'integration', 'decisions', 'risks'])) return { errors: c.errors, warnings: c.warnings };
+
+  const seenBasis = new Set();
+  c.arr(data, 'basis', '$').forEach((b, i) => {
+    if (typeof b !== 'string' || !/^(S[0-9]{1,6}(-AC[0-9]{1,6})?|N[0-9]{1,6})$/.test(b)) err(`$.basis[${i}]`, 'must match ^(S[0-9]{1,6}(-AC[0-9]{1,6})?|N[0-9]{1,6})$');
+    else if (seenBasis.has(b)) err(`$.basis[${i}]`, `duplicate basis "${b}"`);
+    else seenBasis.add(b);
+  });
+  const comps = c.arr(data, 'components', '$');
+  if (Array.isArray(data.components) && comps.length === 0) err('$.components', 'must not be empty');
+  comps.forEach((x, i) => {
+    const p = `$.components[${i}]`;
+    if (!c.obj(x, p)) return;
+    c.known(x, ['id', 'name', 'responsibility'], p);
+    c.id(x, p, /^C[0-9]{1,6}$/, '^C[0-9]{1,6}$'); c.str(x, 'name', p); c.str(x, 'responsibility', p);
+    if (typeof x.id === 'string' && typeof x.name === 'string') c.fits(cardTitle(x), `${p}.name`, 'card title');
+  });
+  const codeObj = (o, k, p) => {
+    if (o[k] === undefined) return;
+    const cp = `${p}.${k}`;
+    if (!c.obj(o[k], cp)) return;
+    c.known(o[k], ['lang', 'text'], cp);
+    c.str(o[k], 'lang', cp); c.str(o[k], 'text', cp);
+  };
+  c.arr(data, 'dataModel', '$').forEach((x, i) => {
+    const p = `$.dataModel[${i}]`;
+    if (!c.obj(x, p)) return;
+    c.known(x, ['id', 'name', 'purpose', 'schema'], p);
+    c.id(x, p, /^M[0-9]{1,6}$/, '^M[0-9]{1,6}$'); c.str(x, 'name', p); c.str(x, 'purpose', p);
+    if (typeof x.id === 'string' && typeof x.name === 'string') c.fits(cardTitle(x), `${p}.name`, 'card title');
+    codeObj(x, 'schema', p);
+  });
+  c.arr(data, 'apis', '$').forEach((x, i) => {
+    const p = `$.apis[${i}]`;
+    if (!c.obj(x, p)) return;
+    c.known(x, ['id', 'name', 'purpose', 'shape'], p);
+    c.id(x, p, /^A[0-9]{1,6}$/, '^A[0-9]{1,6}$'); c.str(x, 'name', p); c.str(x, 'purpose', p);
+    if (typeof x.id === 'string' && typeof x.name === 'string') c.fits(cardTitle(x), `${p}.name`, 'card title');
+    codeObj(x, 'shape', p);
+  });
+  c.arr(data, 'integration', '$').forEach((x, i) => {
+    const p = `$.integration[${i}]`;
+    if (!c.obj(x, p)) return;
+    c.known(x, ['id', 'text'], p);
+    c.id(x, p, /^I[0-9]{1,6}$/, '^I[0-9]{1,6}$'); c.str(x, 'text', p);
+  });
+  c.arr(data, 'decisions', '$').forEach((q, i) => {
+    const p = `$.decisions[${i}]`;
+    if (c.obj(q, p)) c.decision(q, p, /^D[0-9]{1,6}$/, '^D[0-9]{1,6}$', ['pros', 'cons'], designNote);
+  });
+  c.risks(data);
+  return { errors: c.errors, warnings: c.warnings };
+}
+
+// ---------- plan input validation ----------
+export function validatePlan(data) {
+  const c = makeCheck();
+  const { err } = c;
+  if (!c.header(data, PLAN_KIND, ['kind', 'version', 'docId', 'title', 'project', 'createdAt', 'overview', 'requirements', 'architectureChanges', 'phases', 'testing', 'risks', 'questions', 'criteria'])) return { errors: c.errors, warnings: c.warnings };
+
+  c.str(data, 'overview', '$');
+  c.arr(data, 'requirements', '$').forEach((t, i) => {
+    if (typeof t !== 'string' || t.trim() === '') err(`$.requirements[${i}]`, 'must be a non-empty string');
+  });
+  c.arr(data, 'architectureChanges', '$').forEach((x, i) => {
+    const p = `$.architectureChanges[${i}]`;
+    if (!c.obj(x, p)) return;
+    c.known(x, ['file', 'text'], p); c.str(x, 'file', p); c.str(x, 'text', p);
+  });
+
+  const phases = c.arr(data, 'phases', '$');
+  if (Array.isArray(data.phases) && phases.length === 0) err('$.phases', 'must not be empty');
+  const stepIds = new Set();
+  const deps = []; // [path, id, selfId]
+  const stepPath = new Map();
+  const graph = new Map(); // id -> dependsOn ids
+  phases.forEach((ph, i) => {
+    const p = `$.phases[${i}]`;
+    if (!c.obj(ph, p)) return;
+    c.known(ph, ['name', 'steps'], p);
+    c.str(ph, 'name', p);
+    const steps = c.arr(ph, 'steps', p);
+    if (Array.isArray(ph.steps) && steps.length === 0) err(`${p}.steps`, 'must not be empty');
+    steps.forEach((s, j) => {
+      const sp = `${p}.steps[${j}]`;
+      if (!c.obj(s, sp)) return;
+      c.known(s, ['id', 'name', 'file', 'action', 'why', 'dependsOn', 'risk'], sp);
+      if (c.id(s, sp, /^P[0-9]{1,6}-[0-9]{1,6}$/, '^P[0-9]{1,6}-[0-9]{1,6}$')) {
+        stepIds.add(s.id);
+        stepPath.set(s.id, sp);
+        const num = Number(s.id.slice(1, s.id.indexOf('-')));
+        if (num !== i + 1) c.warnings.push(`${sp}.id: "${s.id}" is in phase ${i + 1} but its phase number is ${num}`);
+      }
+      for (const k of ['name', 'file', 'action', 'why']) c.str(s, k, sp);
+      if (!['low', 'medium', 'high'].includes(s.risk)) err(`${sp}.risk`, 'must be "low", "medium" or "high"');
+      c.arr(s, 'dependsOn', sp, false).forEach((d, k) => {
+        if (typeof d !== 'string') err(`${sp}.dependsOn[${k}]`, 'must be a string');
+        else deps.push([`${sp}.dependsOn[${k}]`, d, s.id]);
+      });
+      if (typeof s.id === 'string' && stepIds.has(s.id) && ['name', 'file', 'action', 'why'].every((k) => typeof s[k] === 'string') && RISK_JA[s.risk]
+        && (s.dependsOn === undefined || (Array.isArray(s.dependsOn) && s.dependsOn.every((d) => typeof d === 'string')))) {
+        c.fits(stepLine(s), sp, 'step line');
+      }
+    });
+  });
+  for (const [p, d, self] of deps) {
+    if (d === self) err(p, 'a step cannot depend on itself');
+    else if (!stepIds.has(d)) err(p, `unknown step id "${d}"`);
+    else { if (!graph.has(self)) graph.set(self, []); graph.get(self).push(d); }
+  }
+  // dependency cycles (DFS; each back edge reports one cycle)
+  const state = new Map(); // id -> 1 visiting, 2 done
+  const stack = [];
+  const visit = (id) => {
+    state.set(id, 1); stack.push(id);
+    for (const d of graph.get(id) || []) {
+      if (state.get(d) === 1) {
+        const cyc = [...stack.slice(stack.indexOf(d)), d];
+        err(`${stepPath.get(id)}.dependsOn`, `dependency cycle: ${cyc.join(' -> ')}`);
+      } else if (!state.has(d)) visit(d);
+    }
+    stack.pop(); state.set(id, 2);
+  };
+  for (const id of graph.keys()) if (!state.has(id)) visit(id);
+
+  if (c.obj(data.testing ?? null, '$.testing')) {
+    c.known(data.testing, ['unit', 'integration', 'e2e'], '$.testing');
+    for (const k of ['unit', 'integration', 'e2e']) {
+      c.arr(data.testing, k, '$.testing', false).forEach((t, i) => {
+        if (typeof t !== 'string' || t.trim() === '') err(`$.testing.${k}[${i}]`, 'must be a non-empty string');
+      });
+    }
+  }
+  c.risks(data);
+  c.arr(data, 'questions', '$', false).forEach((q, i) => {
+    const p = `$.questions[${i}]`;
+    if (c.obj(q, p)) c.decision(q, p, /^D[0-9]{1,6}$/, '^D[0-9]{1,6}$', ['note'], planNote);
+  });
+  const crit = c.arr(data, 'criteria', '$');
+  if (Array.isArray(data.criteria) && crit.length === 0) err('$.criteria', 'must not be empty');
+  crit.forEach((x, i) => {
+    const p = `$.criteria[${i}]`;
+    if (!c.obj(x, p)) return;
+    c.known(x, ['id', 'tag', 'axis', 'predicate', 'testApproach', 'source'], p);
+    c.id(x, p, /^[NEBSQ][0-9]{1,6}$/, '^[NEBSQ][0-9]{1,6}$');
+    if (!['機械', 'AI'].includes(x.tag)) err(`${p}.tag`, 'must be "機械" or "AI"');
+    if (typeof x.axis !== 'string' || !/^[NEBSQ]$/.test(x.axis)) err(`${p}.axis`, 'must be one of N, E, B, S, Q');
+    else if (typeof x.id === 'string' && /^[NEBSQ][0-9]{1,6}$/.test(x.id) && x.id[0] !== x.axis) err(`${p}.axis`, `must equal the id's letter "${x.id[0]}"`);
+    c.str(x, 'predicate', p); c.str(x, 'testApproach', p); c.str(x, 'source', p, false);
+    if (x.source !== undefined && (typeof x.source !== 'string' || !/^S[0-9]{1,6}-AC[0-9]{1,6}$/.test(x.source))) err(`${p}.source`, 'must match ^S[0-9]{1,6}-AC[0-9]{1,6}$');
+  });
+  return { errors: c.errors, warnings: c.warnings };
+}
+
+// ---------- design / plan adapters: input -> generic document ----------
+const NONE = { type: 'p', text: 'なし' };
+// Decision block shared by design and plan. noteOf(option) gives the option's own note text.
+function decisionBlock(q, noteOf) {
+  return {
+    type: 'decision', ref: q.id, text: q.text, recommended: q.recommended,
+    options: q.options.map((o) => {
+      const note = composeNote(o, q, noteOf);
+      return { value: o.value, label: o.label, ...(note ? { note } : {}) };
+    })
+  };
+}
+const codeBlock = (x) => ({ type: 'code', lang: x.lang, text: x.text });
+const riskItems = (list) => list.map((r) => ({ ref: r.id, text: riskText(r) }));
+
+export function designToDoc(d) {
+  const doc = {
+    kind: DOC_KIND, version: 1, profile: 'design', docId: d.docId, title: d.title, createdAt: d.createdAt,
+    sections: [
+      { heading: 'もとにした要件', blocks: [{ type: 'p', text: d.basis.length ? `${d.basis.join('・')} を満たすための設計です。` : 'なし' }] },
+      { heading: '構成', blocks: d.components.map((x) => ({ type: 'card', ref: x.id, title: cardTitle(x), blocks: [{ type: 'p', text: x.responsibility }] })) },
+      {
+        heading: 'データ',
+        blocks: d.dataModel.length
+          ? d.dataModel.map((x) => ({ type: 'card', ref: x.id, title: cardTitle(x), blocks: [{ type: 'p', text: x.purpose }, ...(x.schema ? [codeBlock(x.schema)] : [])] }))
+          : [NONE]
+      },
+      {
+        heading: 'API',
+        blocks: d.apis.length
+          ? d.apis.map((x) => ({ type: 'card', ref: x.id, title: cardTitle(x), blocks: [{ type: 'p', text: x.purpose }, ...(x.shape ? [codeBlock(x.shape)] : [])] }))
+          : [NONE]
+      },
+      { heading: '連携とエラー処理', blocks: d.integration.length ? [{ type: 'list', items: d.integration.map((x) => ({ ref: x.id, text: x.text })) }] : [NONE] },
+      {
+        heading: '判断',
+        blocks: d.decisions.length
+          ? d.decisions.map((q) => decisionBlock(q, designNote))
+          : [NONE]
+      },
+      { heading: 'リスク', blocks: d.risks.length ? [{ type: 'list', items: riskItems(d.risks) }] : [NONE] }
+    ]
+  };
+  if (d.project) doc.project = d.project;
+  return doc;
+}
+
+export function planToDoc(d) {
+  const t = d.testing || {};
+  const testItems = [['単体', t.unit], ['結合', t.integration], ['E2E', t.e2e]]
+    .flatMap(([label, list]) => (list || []).map((x) => `${label}: ${x}`));
+  const doc = {
+    kind: DOC_KIND, version: 1, profile: 'plan', docId: d.docId, title: d.title, createdAt: d.createdAt,
+    sections: [
+      { heading: '概要', blocks: [{ type: 'p', text: d.overview }] },
+      { heading: 'もとにする要件', blocks: d.requirements.length ? [{ type: 'list', items: d.requirements }] : [NONE] },
+      {
+        heading: '構成の変更',
+        blocks: d.architectureChanges.length
+          ? [{ type: 'table', columns: ['ファイル', '変えること'], rows: d.architectureChanges.map((x) => [x.file, x.text]) }]
+          : [NONE]
+      },
+      {
+        heading: '実装の手順',
+        blocks: d.phases.map((ph) => ({
+          type: 'card', title: ph.name,
+          blocks: [{
+            type: 'list',
+            items: ph.steps.map((s) => ({
+              ref: s.id,
+              text: stepLine(s)
+            }))
+          }]
+        }))
+      },
+      { heading: 'テストの方針', blocks: testItems.length ? [{ type: 'list', items: testItems }] : [NONE] },
+      { heading: 'リスクと対策', blocks: d.risks.length ? [{ type: 'list', items: riskItems(d.risks) }] : [NONE] },
+      {
+        heading: '判断',
+        blocks: (d.questions || []).length ? d.questions.map((q) => decisionBlock(q, planNote)) : [NONE]
+      },
+      {
+        heading: '成功条件',
+        blocks: [{
+          type: 'table', columns: ['ID', '確かめ方の種別', '軸', '条件', '確かめ方', '元の要件'],
+          rows: d.criteria.map((x) => ({ ref: x.id, cells: [x.id, x.tag, x.axis, x.predicate, x.testApproach, x.source || 'なし'] }))
+        }]
+      }
+    ]
+  };
+  if (d.project) doc.project = d.project;
+  return doc;
+}
+
 // Dispatch on kind. Returns { errors, warnings, doc } where doc is the generic document to render.
 export function prepare(data) {
-  if (isObj(data) && data.kind === REQ_KIND) {
-    const r = validateRequirements(data);
+  if (isObj(data) && data.kind === BUNDLE_KIND) return prepareBundle(data);
+  return prepareOne(data);
+}
+
+const TAB_ORDER = ['requirements', 'design', 'plan'];
+const TAB_KEY_RE = /^consult-[a-z0-9-]{1,32}$/;
+// Bundle: validate the envelope, then every tab's input with its own validator (paths prefixed $.tabs[i].input).
+function prepareBundle(data) {
+  const errors = [];
+  const warnings = [];
+  const err = (p, m) => errors.push(`${p}: ${m}`);
+  const known = (o, allowed, p) => { for (const k of Object.keys(o)) if (!allowed.includes(k)) warnings.push(`${p}.${k}: unknown field (ignored)`); };
+  known(data, ['kind', 'version', 'docId', 'title', 'project', 'createdAt', 'tabs'], '$');
+  if (data.version !== 1) err('$.version', 'must be 1');
+  if (typeof data.docId !== 'string' || !/^[a-z0-9-]{3,64}$/.test(data.docId)) err('$.docId', 'must match [a-z0-9-]{3,64}');
+  if (typeof data.title !== 'string' || data.title.trim() === '') err('$.title', 'must be a non-empty string');
+  if (data.project !== undefined && typeof data.project !== 'string') err('$.project', 'must be a string');
+  if (typeof data.createdAt !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(data.createdAt)) err('$.createdAt', 'must be YYYY-MM-DD');
+  if (!Array.isArray(data.tabs)) { err('$.tabs', 'must be an array'); return { errors, warnings, doc: null }; }
+  if (data.tabs.length < 1 || data.tabs.length > 6) err('$.tabs', `must have 1 to 6 tabs (has ${data.tabs.length})`);
+  const seen = new Set();
+  let lastRank = -1;
+  let currentCount = 0;
+  const outTabs = [];
+  data.tabs.forEach((t, i) => {
+    const p = `$.tabs[${i}]`;
+    if (!isObj(t)) { err(p, 'must be an object'); return; }
+    known(t, ['key', 'status', 'approvedAt', 'answers', 'input'], p);
+    const keyOk = typeof t.key === 'string' && (TAB_ORDER.includes(t.key) || TAB_KEY_RE.test(t.key));
+    if (!keyOk) err(`${p}.key`, 'must be requirements, design, plan or consult-<slug> (^consult-[a-z0-9-]{1,32}$)');
+    else if (seen.has(t.key)) err(`${p}.key`, `duplicate tab key "${t.key}"`);
+    else {
+      seen.add(t.key);
+      const rank = TAB_ORDER.indexOf(t.key);
+      if (rank >= 0) {
+        if (rank < lastRank) err(`${p}.key`, 'tabs must be ordered requirements, design, plan');
+        lastRank = Math.max(lastRank, rank);
+      }
+    }
+    if (t.status !== 'approved' && t.status !== 'current') err(`${p}.status`, 'must be "approved" or "current"');
+    if (t.status === 'current') {
+      currentCount++;
+      if (i !== data.tabs.length - 1) err(`${p}.status`, 'the current tab must be the last tab');
+    }
+    if (t.status === 'approved' && (typeof t.approvedAt !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(t.approvedAt))) err(`${p}.approvedAt`, 'required for an approved tab (YYYY-MM-DD)');
+    if (t.status === 'current' && t.approvedAt !== undefined) err(`${p}.approvedAt`, 'only allowed on an approved tab');
+    if (t.answers !== undefined) {
+      if (t.status !== 'approved') err(`${p}.answers`, 'only allowed on an approved tab');
+      else if (!isObj(t.answers)) err(`${p}.answers`, 'must be an object');
+    }
+    let doc = null;
+    if (!isObj(t.input)) err(`${p}.input`, 'required (an input object)');
+    else if (t.input.kind === BUNDLE_KIND) err(`${p}.input.kind`, 'a bundle cannot contain a bundle');
+    else {
+      const inner = { ...t.input, docId: data.docId }; // inner docId is ignored; the bundle's is used
+      const r = prepareOne(inner);
+      for (const e of r.errors) errors.push(e.replace('$', `${p}.input`));
+      for (const w of r.warnings) warnings.push(w.replace('$', `${p}.input`));
+      doc = r.doc;
+      if (doc && keyOk) {
+        const expect = TAB_ORDER.includes(t.key) ? t.key : 'consult';
+        if (doc.profile !== expect) err(`${p}.input.kind`, `tab "${t.key}" must hold a "${expect === 'consult' ? DOC_KIND : 'review-html/' + expect}" input (profile is "${doc.profile}")`);
+      }
+    }
+    if (doc && isObj(t.answers) && t.status === 'approved') {
+      const byRef = new Map(core.collectDecisions(doc).map((q) => [q.ref, q]));
+      for (const [ref, val] of Object.entries(t.answers)) {
+        const q = byRef.get(ref);
+        const allowed = q ? [...q.options.map((o) => o.value), core.OTHER_VALUE] : [];
+        if (!q) err(`${p}.answers.${ref}`, 'not a decision of this tab');
+        else if (isObj(val)) {
+          // Recorded as "other": { "value": "other", "text": "..." }
+          for (const k of Object.keys(val)) if (k !== 'value' && k !== 'text') err(`${p}.answers.${ref}.${k}`, 'unknown field (allowed: value, text)');
+          if (val.value !== core.OTHER_VALUE) err(`${p}.answers.${ref}.value`, `an object answer must have value "${core.OTHER_VALUE}"`);
+          if (val.text !== undefined && (typeof val.text !== 'string' || val.text.length > core.OTHER_MAX)) err(`${p}.answers.${ref}.text`, `must be a string of at most ${core.OTHER_MAX} chars`);
+        } else if (typeof val !== 'string' || !allowed.includes(val)) err(`${p}.answers.${ref}`, `must be one of ${allowed.join(', ')} or { "value": "other", "text": "..." }`);
+      }
+    }
+    if (doc && keyOk && (t.status === 'approved' || t.status === 'current')) {
+      outTabs.push({
+        key: t.key, status: t.status, ...(t.status === 'approved' ? { approvedAt: t.approvedAt, ...(isObj(t.answers) ? { answers: t.answers } : {}) } : {}),
+        contentHash: crypto.createHash('sha256').update(JSON.stringify(doc)).digest('hex'), doc
+      });
+    }
+  });
+  if (data.tabs.length && currentCount !== 1) err('$.tabs', `exactly one tab must be "current" (has ${currentCount})`);
+  if (errors.length) return { errors, warnings, doc: null };
+  const doc = { kind: BUNDLE_KIND, version: 1, docId: data.docId, title: data.title, createdAt: data.createdAt, tabs: outTabs };
+  if (data.project) doc.project = data.project;
+  return { errors, warnings, doc };
+}
+
+function prepareOne(data) {
+  const adapters = {
+    [REQ_KIND]: [validateRequirements, requirementsToDoc, 'requirements'],
+    [DESIGN_KIND]: [validateDesign, designToDoc, 'design'],
+    [PLAN_KIND]: [validatePlan, planToDoc, 'plan']
+  };
+  const a = isObj(data) && Object.prototype.hasOwnProperty.call(adapters, data.kind) ? adapters[data.kind] : null;
+  if (a) {
+    const [validate, toDoc, profile] = a;
+    const r = validate(data);
     if (r.errors.length) return { ...r, doc: null };
-    const doc = requirementsToDoc(data);
-    const g = validateDoc(doc, ['requirements']); // internal consistency check of the adapter output
+    const doc = toDoc(data);
+    const g = validateDoc(doc, [profile]); // internal consistency check of the adapter output
     if (g.errors.length) return { errors: g.errors.map((e) => `adapter: ${e}`), warnings: r.warnings, doc: null };
     return { errors: [], warnings: r.warnings, doc };
   }
@@ -394,16 +861,26 @@ function readAsset(name) {
   return t;
 }
 
-export function renderHtml(d) {
+// Renders one document (a whole page, or one tab of a bundle). opt: { ns, tabLabel, status, approvedAt, answers }.
+function renderParts(d, opt) {
+  const ns = opt.ns || '';
+  const approved = opt.status === 'approved';
+  const answers = opt.answers || {};
   let auto = 0;
+  let gauto = 0;
   let heading = '';
   // Address attributes for one text-bearing element: the block's ref, else b1, b2, ... in document order.
-  const A = (ref) => {
-    const addr = ref ?? `b${++auto}`;
-    return `data-addr="${esc(addr)}" data-label="${esc(heading + (ref ? ` ${ref}` : ''))}"`;
+  // In a bundle every address is namespaced by the tab key and every label starts with the tab label.
+  // Guide-box elements (G) have their own counter (g1, g2, ...) in a bundle, so the body's b<n> addresses
+  // never depend on the tab's status (current guide has a verdict list, approved guide does not).
+  const addrAttr = (raw, ref) => {
+    const addr = ns ? `${ns}:${raw}` : raw;
+    const label = (opt.tabLabel ? `${opt.tabLabel} › ` : '') + heading + (ref ? ` ${ref}` : '');
+    return `data-addr="${esc(addr)}" data-label="${esc(label)}"`;
   };
+  const A = (ref) => addrAttr(ref ?? `b${++auto}`, ref);
+  const G = () => (ns ? addrAttr(`g${++gauto}`) : A());
   const refAttr = (b) => (b.ref ? ` data-ref="${esc(b.ref)}"` : '');
-
   function list(b) {
     const tag = b.ordered ? 'ol' : 'ul';
     let h = `<${tag} class="plain"${refAttr(b)}>`;
@@ -418,7 +895,11 @@ export function renderHtml(d) {
   function table(b) {
     let h = `<div class="tablewrap"><table${refAttr(b)}><thead><tr>`;
     h += b.columns.map((c) => `<th ${A()}>${esc(c)}</th>`).join('') + '</tr></thead><tbody>';
-    for (const r of b.rows) h += '<tr>' + r.map((c) => `<td ${A()}>${esc(c)}</td>`).join('') + '</tr>';
+    for (const r of b.rows) {
+      const cells = Array.isArray(r) ? r : r.cells;
+      const rowRef = Array.isArray(r) ? undefined : r.ref;
+      h += '<tr>' + cells.map((c, j) => `<td ${A(j === 0 ? rowRef : undefined)}>${esc(c)}</td>`).join('') + '</tr>';
+    }
     return h + '</tbody></table></div>';
   }
   function code(b) {
@@ -442,19 +923,46 @@ export function renderHtml(d) {
         `<h3 ${A(b.ref)}>${esc(b.title)}</h3>` + (b.tag ? `<span class="tag">${esc(b.tag)}</span>` : '') + '</div>' +
         b.blocks.map(inner).join('') + '</div>';
     }
-    if (b.type === 'decision') {
-      let h = `<div class="card dcard" data-decision="${esc(b.ref)}"><span class="chip" data-chip="${esc(b.ref)}">未確認</span>` +
+    if (b.type === 'decision' && approved) {
+      // Approved tab: the recorded answer (else the recommended option), shown but not editable.
+      const dk = `${ns}:${b.ref}`;
+      const ans = answers[b.ref];
+      const chosen = typeof ans === 'string' ? ans : (isObj(ans) ? ans.value : b.recommended);
+      const otherText = isObj(ans) && typeof ans.text === 'string' ? ans.text.trim() : '';
+      let h = `<div class="card dcard dcard-approved" data-decision="${esc(dk)}"><span class="chip">承認時の回答</span>` +
         `<p class="q" ${A(b.ref)}>${esc(b.text)}</p>`;
       for (const op of b.options) {
         const rec = op.value === b.recommended;
-        h += `<label class="opt"><input type="radio" name="d-${esc(b.ref)}" value="${esc(op.value)}"${rec ? ' checked' : ''}>` +
+        h += `<label class="opt"><input type="radio" name="d-${esc(dk)}" value="${esc(op.value)}"${op.value === chosen ? ' checked' : ''} disabled>` +
           `<span class="optbody"><span ${A()}>${esc(op.label)}</span>` +
           (rec ? '<span class="rec">推奨</span>' : '') +
           (op.note ? `<span class="optnote">${esc(op.note)}</span>` : '') + '</span></label>';
       }
-      h += `<label class="opt opt-other"><input type="radio" name="d-${esc(b.ref)}" value="${core.OTHER_VALUE}">` +
+      // The "other" label is always emitted (hidden unless it is the recorded answer), so the tab's b<n>
+      // addresses are the same as in the current rendering whatever was answered.
+      const otherChosen = chosen === core.OTHER_VALUE;
+      h += `<label class="opt opt-other"${otherChosen ? '' : ' hidden'}><input type="radio" name="d-${esc(dk)}" value="${core.OTHER_VALUE}"${otherChosen ? ' checked' : ''} disabled>` +
+        `<span class="optbody"><span ${A()}>${esc(core.OTHER_LABEL)}</span></span></label>`;
+      if (otherChosen) {
+        // The recorded free text has its own non-b address ("<tab>:<ref>.other"; refs never contain ".").
+        if (otherText) h += `<p class="other-text" ${addrAttr(`${b.ref}.other`, b.ref + ' その他')}>${esc(otherText)}</p>`;
+      }
+      return h + '</div>';
+    }
+    if (b.type === 'decision') {
+      const dk = ns ? `${ns}:${b.ref}` : b.ref;
+      let h = `<div class="card dcard" data-decision="${esc(dk)}"><span class="chip" data-chip="${esc(dk)}">未確認</span>` +
+        `<p class="q" ${A(b.ref)}>${esc(b.text)}</p>`;
+      for (const op of b.options) {
+        const rec = op.value === b.recommended;
+        h += `<label class="opt"><input type="radio" name="d-${esc(dk)}" value="${esc(op.value)}"${rec ? ' checked' : ''}>` +
+          `<span class="optbody"><span ${A()}>${esc(op.label)}</span>` +
+          (rec ? '<span class="rec">推奨</span>' : '') +
+          (op.note ? `<span class="optnote">${esc(op.note)}</span>` : '') + '</span></label>';
+      }
+      h += `<label class="opt opt-other"><input type="radio" name="d-${esc(dk)}" value="${core.OTHER_VALUE}">` +
         `<span class="optbody"><span ${A()}>${esc(core.OTHER_LABEL)}</span></span></label>` +
-        `<textarea class="other-ta" data-other="${esc(b.ref)}" maxlength="${core.OTHER_MAX}" rows="3" ` +
+        `<textarea class="other-ta" data-other="${esc(dk)}" maxlength="${core.OTHER_MAX}" rows="3" ` +
         `placeholder="${esc(core.OTHER_PLACEHOLDER)}" aria-label="${esc(core.OTHER_LABEL)}" hidden></textarea>`;
       return h + '</div>';
     }
@@ -463,14 +971,24 @@ export function renderHtml(d) {
 
   const verdictDefs = core.PROFILES[d.profile].verdicts;
   // The box right under the title: what this page is asking, and what each answer leads to.
-  heading = d.profile === 'requirements' ? 'この画面で確認すること' : 'この資料の目的';
-  const guideText = d.profile === 'requirements'
-    ? `${d.title} の要件（何を作るか・何を作らないか）が正しいかを確認します。この内容で設計や実装に進んでよいかを判断してください。`
-    : (d.purpose || '');
-  const guide = `<aside class="guide"><h2 ${A()}>${esc(heading)}</h2><p ${A()}>${esc(guideText)}</p>` +
-    '<p class="guide-sub">回答の選び方と、そのあとの動き</p><ul class="plain guide-list">' +
-    verdictDefs.map((v) => `<li class="gv"><span ${A()}><strong>${esc(v.label)}</strong>: ${esc(v.explain)}</span></li>`).join('') +
-    '</ul></aside>';
+  const GUIDE = {
+    requirements: `${d.title} の要件（何を作るか・何を作らないか）が正しいかを確認します。この内容で設計や実装に進んでよいかを判断してください。`,
+    design: `${d.title} の設計（どう作るか）が正しいかを確認します。この設計で実装の計画に進んでよいかを判断してください。`,
+    plan: `${d.title} の実装計画（どの順で、どのファイルを、どう変えるか）が正しいかを確認します。この計画で実装に進んでよいかを判断してください。`
+  };
+  const guideText = d.profile === 'consult' ? (d.purpose || '') : GUIDE[d.profile];
+  let guide;
+  if (approved) {
+    heading = `${d.profile === 'consult' ? '回答済み' : '承認済み'}（${opt.approvedAt}）`;
+    const first = guideText.indexOf('。') >= 0 ? guideText.slice(0, guideText.indexOf('。') + 1) : guideText;
+    guide = `<aside class="guide guide-approved"><h2 ${G()}>${esc(heading)}</h2><p ${G()}>${esc(first)}</p></aside>`;
+  } else {
+    heading = d.profile === 'consult' ? 'この資料の目的' : 'この画面で確認すること';
+    guide = `<aside class="guide"><h2 ${G()}>${esc(heading)}</h2><p ${G()}>${esc(guideText)}</p>` +
+      '<p class="guide-sub">回答の選び方と、そのあとの動き</p><ul class="plain guide-list">' +
+      verdictDefs.map((v) => `<li class="gv"><span ${G()}><strong>${esc(v.label)}</strong>: ${esc(v.explain)}</span></li>`).join('') +
+      '</ul></aside>';
+  }
 
   const body = [];
   for (const s of d.sections) {
@@ -478,6 +996,32 @@ export function renderHtml(d) {
     body.push(`<section><h2 ${A(s.ref)}>${esc(s.heading)}</h2>`);
     for (const b of s.blocks) body.push(render(b));
     body.push('</section>');
+  }
+  return { guide, body: body.join('\n'), verdictDefs };
+}
+
+export function renderHtml(d) {
+  const bundle = d.kind === BUNDLE_KIND;
+  let verdictDefs, headExtra, mainBody, dlgTitle, answerLabel;
+  if (bundle) {
+    const parts = d.tabs.map((t) => ({ t, p: renderParts(t.doc, { ns: t.key, tabLabel: core.tabLabel(t.key), status: t.status, approvedAt: t.approvedAt, answers: t.answers }) }));
+    const cur = d.tabs[d.tabs.length - 1];
+    verdictDefs = parts[parts.length - 1].p.verdictDefs;
+    const sel = (t) => t.status === 'current';
+    headExtra = '';
+    mainBody = '<nav class="tabbar" id="tabbar"><div class="tablist" role="tablist" aria-label="資料の段階">' +
+      d.tabs.map((t) => `<button type="button" role="tab" class="tab${sel(t) ? ' is-current' : ''}" id="tab-${esc(t.key)}" data-tab="${esc(t.key)}" aria-controls="tp-${esc(t.key)}" aria-selected="${sel(t)}" tabindex="${sel(t) ? 0 : -1}">` +
+        `<span class="tab-name">${esc(core.tabLabel(t.key))}</span><span class="tab-badge ${t.status}">${t.status === 'approved' ? (t.doc.profile === 'consult' ? '済み' : '承認済み') : '確認中'}</span></button>`).join('') +
+      '</div></nav>\n' +
+      parts.map(({ t, p }) => `<div class="tabpanel" role="tabpanel" id="tp-${esc(t.key)}" data-panel="${esc(t.key)}" aria-labelledby="tab-${esc(t.key)}" tabindex="0"${sel(t) ? '' : ' hidden'}>\n${p.guide}\n${p.body}\n</div>`).join('\n');
+    answerLabel = core.tabLabel(cur.key);
+    dlgTitle = `${answerLabel}について回答する`;
+  } else {
+    const p = renderParts(d, {});
+    verdictDefs = p.verdictDefs;
+    headExtra = p.guide;
+    mainBody = p.body;
+    dlgTitle = '回答する';
   }
 
   const verdicts = verdictDefs
@@ -505,10 +1049,10 @@ ${readAsset('page.css')}
 <header>
 <h1>${title}</h1>
 <p class="meta">${d.project ? esc(d.project) + ' / ' : ''}${esc(d.createdAt)}</p>
-${guide}
+${headExtra}
 <p class="staleinfo" id="stalenote" hidden>内容が更新されたので、前回の入力は引き継いでいません。</p>
 </header>
-${body.join('\n')}
+${mainBody}
 <footer class="page-foot">本文の一部を選択するとコメントを付けられます。入力はこのブラウザに自動保存されます。</footer>
 </main>
 <aside class="panel" id="panel" aria-label="コメント一覧">
@@ -529,6 +1073,7 @@ ${body.join('\n')}
 <div class="pop" id="pop" role="dialog" aria-label="コメントを追加" hidden>
   <p class="pop-quote" id="popQuote"></p>
   <textarea id="popTa" maxlength="4000" rows="3" placeholder="コメントを入力" aria-label="コメント"></textarea>
+  <p class="pop-hint" id="popHint" role="status" hidden>入力中のコメントがあります。保存するか、キャンセルしてからタブを切り替えてください。</p>
   <div class="pop-foot">
     <span class="pop-key">Ctrl / ⌘ + Enter で保存</span>
     <div class="pop-btns">
@@ -541,7 +1086,7 @@ ${body.join('\n')}
 <div class="scrim" id="scrim" hidden>
   <section class="dlg" role="dialog" aria-modal="true" aria-labelledby="dlgTitle">
     <div class="dlg-head">
-      <h2 class="dlg-title" id="dlgTitle" tabindex="-1">回答する</h2>
+      <h2 class="dlg-title" id="dlgTitle" tabindex="-1">${esc(dlgTitle)}</h2>
       <button type="button" class="x" id="dlgClose" aria-label="閉じる">×</button>
     </div>
     <fieldset>

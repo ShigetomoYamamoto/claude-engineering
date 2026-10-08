@@ -30,6 +30,21 @@
         { value: 'rescope', label: '範囲を変える', explain: 'やること・やらないことを見直し、もう一度見せます。' },
         { value: 'abort', label: '中止する', explain: 'チャットで、中止してよいかを確認します。' }
       ]
+    },
+    design: {
+      verdicts: [
+        { value: 'approve', label: 'この設計でよい', explain: 'チャットで最後の確認をしてから、実装の計画に進みます。' },
+        { value: 'revise', label: '直してほしい', explain: 'コメントをもとに設計を直し、もう一度この画面で見せます。' },
+        { value: 'rescope', label: '要件から見直す', explain: '要件の段階に戻って見直し、もう一度見せます。' },
+        { value: 'abort', label: '中止する', explain: 'チャットで、中止してよいかを確認します。' }
+      ]
+    },
+    plan: {
+      verdicts: [
+        { value: 'approve', label: 'この計画でよい', explain: 'チャットで最後の確認をしてから、実装に進みます。' },
+        { value: 'revise', label: '直してほしい', explain: 'コメントをもとに計画を直し、もう一度この画面で見せます。' },
+        { value: 'abort', label: '中止する', explain: 'チャットで、中止してよいかを確認します。' }
+      ]
     }
   };
 
@@ -72,15 +87,17 @@
       if (!c || typeof c !== 'object') return;
       if (typeof c.addr !== 'string' || c.addr === '' || typeof c.quote !== 'string' || c.quote === '') return;
       if (typeof c.text !== 'string' || c.text.trim() === '') return;
-      out.push({
+      var rec = {
         id: typeof c.id === 'string' && c.id ? c.id : uid(),
-        addr: cut(c.addr, 64),
+        addr: cut(c.addr, 128),
         label: typeof c.label === 'string' ? cut(c.label, 200) : '',
         quote: cut(c.quote, MAXLEN),
         prefix: typeof c.prefix === 'string' ? cut(c.prefix, CTX) : '',
         suffix: typeof c.suffix === 'string' ? cut(c.suffix, CTX) : '',
         text: cut(c.text, MAXLEN)
-      });
+      };
+      if (c.sent === true) rec.sent = true; // already delivered in an earlier answer (bundle pages only)
+      out.push(rec);
     });
     return out;
   }
@@ -243,7 +260,124 @@
     return { ok: bytes <= limit, bytes: bytes, max: limit };
   }
 
+  // ---- bundle (tabs) ----
+  var BUNDLE_KIND = 'review-html/bundle';
+  var BUNDLE_VERSION = 3;
+  var TAB_LABELS = { requirements: '要件', design: '設計', plan: '計画' };
+  function tabLabel(key) {
+    if (has(TAB_LABELS, key)) return TAB_LABELS[key];
+    return typeof key === 'string' && key.indexOf('consult-') === 0 ? '相談（' + key.slice(8) + '）' : String(key);
+  }
+  // Address namespacing: "<tab key>:<addr>". Tab keys never contain ":".
+  function nsAddr(key, addr) { return key + ':' + addr; }
+  function tabOfAddr(addr) {
+    var i = typeof addr === 'string' ? addr.indexOf(':') : -1;
+    return i > 0 ? addr.slice(0, i) : null;
+  }
+  function currentTabOf(bundle) {
+    var tabs = (bundle && bundle.tabs) || [];
+    for (var i = 0; i < tabs.length; i++) if (tabs[i].status === 'current') return tabs[i];
+    return null;
+  }
+  function initialBundleState(bundle) { return initialState(currentTabOf(bundle).doc); }
+  // Saved blob (untrusted): { tabs: { key: { contentHash, comments } }, current: { key, contentHash, decisions, verdict, note }, sent }.
+  // Comments are kept per tab only when that tab's hash still matches; the current-tab state and "sent"
+  // only when the current key and its hash match. Returns a state plus `stale` (something saved was dropped).
+  function restoreBundleState(bundle, saved) {
+    var cur = currentTabOf(bundle);
+    var st = initialState(cur.doc);
+    st.stale = false;
+    if (!saved || typeof saved !== 'object') return st;
+    var savedTabs = saved.tabs && typeof saved.tabs === 'object' ? saved.tabs : {};
+    var comments = [];
+    bundle.tabs.forEach(function (t) {
+      var s = has(savedTabs, t.key) ? savedTabs[t.key] : null;
+      if (!s || typeof s !== 'object') return;
+      var list = cleanComments(s.comments);
+      if (s.contentHash !== t.contentHash) { if (list.length) st.stale = true; return; } // comments of a changed tab are dropped
+      list.forEach(function (c) { if (tabOfAddr(c.addr) === t.key) comments.push(c); });
+    });
+    st.comments = comments;
+    Object.keys(savedTabs).forEach(function (k) {
+      if (bundle.tabs.some(function (t) { return t.key === k; })) return;
+      var s = savedTabs[k];
+      if (s && typeof s === 'object' && cleanComments(s.comments).length) st.stale = true; // a removed tab had comments
+    });
+    var sc = saved.current;
+    if (sc && typeof sc === 'object' && sc.key === cur.key && sc.contentHash === cur.contentHash) {
+      var r = restoreState(cur.doc, { decisions: sc.decisions, verdict: sc.verdict, note: sc.note, sent: saved.sent === true });
+      st.decisions = r.decisions; st.verdict = r.verdict; st.note = r.note; st.sent = r.sent;
+    } else if (sc && typeof sc === 'object' && hasCurrentInput(sc, saved)) st.stale = true; // the current state is dropped
+    return st;
+  }
+  // True when a saved current-tab state holds something the user entered (a confirmed decision, a verdict, a note, or a send).
+  function hasCurrentInput(sc, saved) {
+    if (saved.sent === true) return true;
+    if (typeof sc.verdict === 'string' && sc.verdict) return true;
+    if (typeof sc.note === 'string' && sc.note.trim()) return true;
+    var d = sc.decisions && typeof sc.decisions === 'object' ? sc.decisions : {};
+    return Object.keys(d).some(function (k) { return d[k] && typeof d[k] === 'object' && d[k].touched === true; });
+  }
+  // Comments not yet delivered, and the same list marked as delivered (pure; the caller persists the new state).
+  function unsentComments(list) { return cleanComments(list).filter(function (c) { return c.sent !== true; }); }
+  function markCommentsSent(state) {
+    var next = {};
+    Object.keys(state).forEach(function (k) { next[k] = state[k]; });
+    next.comments = (state.comments || []).map(function (c) {
+      var o = {};
+      Object.keys(c).forEach(function (k) { o[k] = c[k]; });
+      o.sent = true;
+      return o;
+    });
+    return next;
+  }
+  // What to do with an open comment popup when the user asks for another tab:
+  // no popup -> switch; popup without typed text -> close it, then switch; typed text -> stay (never lose it silently).
+  function tabSwitchPolicy(popOpen, typed) {
+    if (!popOpen) return 'switch';
+    return typeof typed === 'string' && typed.trim() !== '' ? 'stay' : 'close-then-switch';
+  }
+  function serializeBundleState(bundle, state) {
+    var cur = currentTabOf(bundle);
+    var tabs = {};
+    bundle.tabs.forEach(function (t) {
+      tabs[t.key] = {
+        contentHash: t.contentHash,
+        comments: (state.comments || []).filter(function (c) { return tabOfAddr(c.addr) === t.key; }).map(function (c) {
+          var o = { id: c.id, addr: c.addr, label: c.label, quote: c.quote, prefix: c.prefix, suffix: c.suffix, text: c.text };
+          if (c.sent === true) o.sent = true;
+          return o;
+        })
+      };
+    });
+    return {
+      tabs: tabs,
+      current: { key: cur.key, contentHash: cur.contentHash, decisions: state.decisions, verdict: state.verdict, note: state.note },
+      sent: state.sent === true
+    };
+  }
+  function buildBundlePayload(bundle, state, now) {
+    var cur = currentTabOf(bundle);
+    var base = buildPayload(cur.doc, { decisions: state.decisions, comments: [], verdict: state.verdict, note: state.note }, now);
+    var known = {};
+    bundle.tabs.forEach(function (t) { known[t.key] = true; });
+    var comments = [];
+    unsentComments(state.comments).forEach(function (c) { // comments already sent are not sent again
+      var tab = tabOfAddr(c.addr);
+      if (!tab || !has(known, tab)) return;
+      comments.push({ tab: tab, addr: c.addr, label: c.label, quote: c.quote, prefix: c.prefix, suffix: c.suffix, text: c.text });
+    });
+    return {
+      kind: KIND, version: BUNDLE_VERSION, docId: bundle.docId, tab: cur.key, profile: base.profile,
+      verdict: base.verdict, decisions: base.decisions, comments: comments, note: base.note, sentAt: base.sentAt
+    };
+  }
+
   return {
+    BUNDLE_KIND: BUNDLE_KIND, BUNDLE_VERSION: BUNDLE_VERSION, tabLabel: tabLabel, nsAddr: nsAddr, tabOfAddr: tabOfAddr,
+    currentTabOf: currentTabOf, initialBundleState: initialBundleState, restoreBundleState: restoreBundleState,
+    serializeBundleState: serializeBundleState, buildBundlePayload: buildBundlePayload,
+    unsentComments: unsentComments, markCommentsSent: markCommentsSent, tabSwitchPolicy: tabSwitchPolicy,
     OTHER_VALUE: OTHER_VALUE, OTHER_LABEL: OTHER_LABEL, OTHER_MAX: OTHER_MAX, OTHER_PLACEHOLDER: OTHER_PLACEHOLDER,
     applyDecisionText: applyDecisionText, optionsOf: optionsOf,
     KIND: KIND, VERSION: VERSION, CTX: CTX, MAXLEN: MAXLEN, PROFILES: PROFILES,

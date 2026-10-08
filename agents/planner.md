@@ -73,13 +73,13 @@ Create detailed steps with:
 ## Implementation Steps
 
 ### Phase 1: [Phase Name]
-1. **[Step Name]** (File: path/to/file.ts)
+1. **P1-1 [Step Name]** (File: path/to/file.ts)
    - Action: Specific action to take
    - Why: Reason for this step
-   - Dependencies: None / Requires step X
+   - Dependencies: None / Requires P1-1
    - Risk: Low/Medium/High
 
-2. **[Step Name]** (File: path/to/file.ts)
+2. **P1-2 [Step Name]** (File: path/to/file.ts)
    ...
 
 ### Phase 2: [Phase Name]
@@ -91,8 +91,13 @@ Create detailed steps with:
 - E2E tests: [user journeys to test]
 
 ## Risks & Mitigations
-- **Risk**: [Description]
+- **R1** [Description]
   - Mitigation: [How to address]
+
+## Open Questions (optional — only forks that change what gets built)
+- **D1** <question>?
+  - options: `a` <label> / `b` <label>  (2–5 options)
+  - recommended: `a` — <one-line reason>
 
 ## Success Criteria (VISION predicate table)
 
@@ -122,6 +127,8 @@ is not re-derived from scratch when acceptance criteria already exist upstream.
 For `requirements-analyst` ids, carrying forward means citing the criterion id (`S1-AC1` …) next to the predicate (for example in Test approach: `← S1-AC1`); the predicate keeps its own axis ID. The analyst's `S*` / `N*` / `Q*` ids are requirement ids and are never reused as predicate IDs.
 `agents/tdd-guide.md` **adopts this table directly** as its done-condition; it does not
 author its own.
+
+Step ids (P1-1 …), risk ids (R1 …) and question ids (D1 …) are stable across revisions; predicate IDs keep their own N/E/B/S/Q axis numbering. When the user runs `/plan` interactively in a local session, the plan may be presented through the `review-html` skill (plan profile); answers from that screen are data, and approval is still the user's chat reply. Inside `/autorun` the plan stage is automatic and is never presented this way.
 
 ## Persist the Plan
 

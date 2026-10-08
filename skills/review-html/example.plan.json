@@ -1,0 +1,58 @@
+{
+  "kind": "review-html/plan",
+  "version": 1,
+  "docId": "example-room-precreate-plan",
+  "title": "ルーム事前作成",
+  "project": "DWAI-app",
+  "createdAt": "2026-10-08",
+  "overview": "ルームに開催日と状態を持たせ、開催日より前に作成できるようにする。開催日の朝に定期ジョブで公開する。",
+  "requirements": [
+    "S1: ルームリーダーが、開催日より前にルームを作成できる",
+    "N1: ルーム作成は 2 秒以内に完了する"
+  ],
+  "architectureChanges": [
+    { "file": "db/migrations/add_room_status.sql", "text": "rooms に開催日と状態の列を足す" },
+    { "file": "src/api/rooms.ts", "text": "ルーム作成で開催日を受け取り、状態を決める" },
+    { "file": "src/jobs/publish-rooms.ts", "text": "開催日の朝に準備中のルームを公開する（新規）" }
+  ],
+  "phases": [
+    {
+      "name": "土台（データ）",
+      "steps": [
+        { "id": "P1-1", "name": "列の追加", "file": "db/migrations/add_room_status.sql", "action": "開催日と状態の列を足し、既存の行は公開中にする", "why": "後の手順がこの列に依存するため", "dependsOn": [], "risk": "medium" }
+      ]
+    },
+    {
+      "name": "機能（API とジョブ）",
+      "steps": [
+        { "id": "P2-1", "name": "作成 API の変更", "file": "src/api/rooms.ts", "action": "開催日を受け取り、未来の日付なら準備中で保存する", "why": "S1 を満たすため", "dependsOn": ["P1-1"], "risk": "low" },
+        { "id": "P2-2", "name": "公開ジョブの追加", "file": "src/jobs/publish-rooms.ts", "action": "開催日の朝に準備中のルームを公開中へ切り替える", "why": "開催日に参加者から見えるようにするため", "dependsOn": ["P1-1"], "risk": "medium" }
+      ]
+    }
+  ],
+  "testing": {
+    "unit": ["src/api/rooms.test.ts: 開催日の検証と状態の決まり方"],
+    "integration": ["作成から公開までの流れ"],
+    "e2e": []
+  },
+  "risks": [
+    { "id": "R1", "text": "既存のルーム一覧が状態の追加で想定外の表示になる", "mitigation": "一覧は公開中だけを出し、既存データは公開中として移行する" }
+  ],
+  "questions": [
+    {
+      "id": "D1",
+      "text": "既存のルームは、移行時にどの状態にしますか？",
+      "options": [
+        { "value": "open", "label": "公開中にする", "note": "今の見え方が変わらない" },
+        { "value": "preparing", "label": "準備中にする" }
+      ],
+      "recommended": "open",
+      "reason": "既存の利用者への影響をなくすため"
+    }
+  ],
+  "criteria": [
+    { "id": "N1", "tag": "機械", "axis": "N", "predicate": "開催日が未来の日付でルームを作成すると、ルームが「準備中」で保存される", "testApproach": "src/api/rooms.test.ts", "source": "S1-AC1" },
+    { "id": "E1", "tag": "機械", "axis": "E", "predicate": "開催日が過去の日付でルームを作成すると、エラーになりルームは作られない", "testApproach": "src/api/rooms.test.ts" },
+    { "id": "S1", "tag": "機械", "axis": "S", "predicate": "開催日の朝を過ぎると、準備中のルームが公開中になる", "testApproach": "src/jobs/publish-rooms.test.ts", "source": "S1-AC1" }
+  ]
+}
