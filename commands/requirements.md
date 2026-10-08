@@ -30,4 +30,4 @@ description: 曖昧な要望を構造化された要件に整理します。requ
 
 ## 関連エージェント
 
-`~/.claude/agents/requirements-analyst.md` を起動します(要件をユーザーが承認するまで設計・実装に進みません — 詳細はエージェント本体)。
+`.claude/agents/requirements-analyst.md` を起動します(要件をユーザーが承認するまで設計・実装に進みません — 詳細はエージェント本体)。

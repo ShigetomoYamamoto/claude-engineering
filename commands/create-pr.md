@@ -47,7 +47,7 @@ git diff develop...HEAD
 
 ## ステップ 4: PRタイトルとDescription の生成
 
-Description テンプレート・Summary/Test plan の書き方は `~/.claude/skills/git-workflow/SKILL.md` を参照すること。
+Description テンプレート・Summary/Test plan の書き方は `.claude/skills/git-workflow/SKILL.md` を参照すること。
 
 ### タイトルのルール
 

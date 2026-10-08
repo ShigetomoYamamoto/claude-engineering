@@ -29,7 +29,7 @@ description: PR レビューコメントへの対応を実行します。review-
 
 ## 関連エージェント
 
-`~/.claude/agents/review-responder.md` を起動します。
+`.claude/agents/review-responder.md` を起動します。
 
 ## 注意事項
 

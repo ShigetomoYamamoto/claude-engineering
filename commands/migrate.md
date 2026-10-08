@@ -34,7 +34,7 @@ description: データベースマイグレーションを実行します。migr
 
 ## 関連エージェント
 
-`~/.claude/agents/migration-runner.md` を起動します。
+`.claude/agents/migration-runner.md` を起動します。
 
 ## 注意事項
 

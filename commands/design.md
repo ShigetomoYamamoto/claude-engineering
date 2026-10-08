@@ -34,4 +34,4 @@ argument-hint: <テーマ>
 
 ## 関連エージェント
 
-`~/.claude/agents/architect.md` を起動します(設計をユーザーが承認するまで実装に進みません — 詳細はエージェント本体)。
+`.claude/agents/architect.md` を起動します(設計をユーザーが承認するまで実装に進みません — 詳細はエージェント本体)。

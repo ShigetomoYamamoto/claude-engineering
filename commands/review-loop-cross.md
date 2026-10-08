@@ -36,7 +36,7 @@ git diff HEAD > /tmp/review-cross-diff.patch
 codex exec "あなたは厳格なシニアコードレビュアー。次の git diff をレビューし、CRITICAL/HIGH の問題のみを『[重大度] [ファイル:行] 要約 / 影響 / 修正方針』形式で列挙せよ。HIGH 以上が無ければ NO_ISSUES の1行のみ出力。MEDIUM/LOW は出力しない。--- $(cat /tmp/review-cross-diff.patch)"
 ```
 
-> codex の正確な起動方法は環境の CLI 仕様に合わせる。**出力契約は `~/.claude/agents/reviewer.md` と同一**にすること(CRITICAL/HIGH のみ・無ければ `NO_ISSUES` 1行)。フォーマットが異なる場合は親が CRITICAL/HIGH と NO_ISSUES を抽出して正規化する。
+> codex の正確な起動方法は環境の CLI 仕様に合わせる。**出力契約は `.claude/agents/reviewer.md` と同一**にすること(CRITICAL/HIGH のみ・無ければ `NO_ISSUES` 1行)。フォーマットが異なる場合は親が CRITICAL/HIGH と NO_ISSUES を抽出して正規化する。
 
 出力を `CURRENT_REVIEW` として保持。
 
@@ -51,7 +51,7 @@ codex exec "あなたは厳格なシニアコードレビュアー。次の git 
 
 ## ステップ4: 修正(Claude の fixer)
 
-`REVIEW_HISTORY` に `CURRENT_REVIEW` を追加してから、Task ツールで `fixer` サブエージェント(`~/.claude/agents/fixer.md`)を起動。プロンプト先頭に引き継ぎコンテキスト(SCOPE・FIX_HISTORY)を置く。fixer の出力(修正ファイル+概要)を `FIX_HISTORY` に追加。
+`REVIEW_HISTORY` に `CURRENT_REVIEW` を追加してから、Task ツールで `fixer` サブエージェント(`.claude/agents/fixer.md`)を起動。プロンプト先頭に引き継ぎコンテキスト(SCOPE・FIX_HISTORY)を置く。fixer の出力(修正ファイル+概要)を `FIX_HISTORY` に追加。
 
 ## ステップ5: 進捗報告
 
@@ -70,4 +70,4 @@ N をインクリメントしてステップ1へ。
 # 注意
 
 - **レビュー=外部モデル、修正=Claude の fixer** の分業を厳守。
-- 安全規律(往復上限・破壊的操作の毎回確認・完了条件の改竄禁止)の正本は `~/.claude/rules/loop-safety.md`。本コマンドの往復上限はそのハードストップ(ターン/時間)とは独立した二重ブレーキで、**いずれか先に到達した方で停止**する。
+- 安全規律(往復上限・破壊的操作の毎回確認・完了条件の改竄禁止)の正本は `.claude/rules/loop-safety.md`。本コマンドの往復上限はそのハードストップ(ターン/時間)とは独立した二重ブレーキで、**いずれか先に到達した方で停止**する。

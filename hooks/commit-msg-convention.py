@@ -77,7 +77,7 @@ try:
     print(f'  件名: {subject}')
     print('  形式: <type>: <日本語の説明>  （例: "fix: ログイン時の null 参照を修正"）')
     print(f'  type: {", ".join(TYPES)}')
-    print('  詳細は ~/.claude/skills/git-workflow/SKILL.md を参照。')
+    print('  詳細は .claude/skills/git-workflow/SKILL.md を参照。')
     sys.exit(2)
 
 except SystemExit:

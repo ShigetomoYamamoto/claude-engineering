@@ -33,7 +33,7 @@ argument-hint: <path> [最大イテレーション数 (デフォルト: 2)]
 codex exec "あなたは厳格なシニアコードレビュアー。次のパス配下を読んでレビューし、CRITICAL/HIGH の問題のみを『[重大度] [ファイル:行] 要約 / 影響 / 修正方針』形式で列挙せよ。HIGH 以上が無ければ NO_ISSUES の1行のみ。MEDIUM/LOW は出力しない。対象パス: <path>"
 ```
 
-> 出力契約は `~/.claude/agents/reviewer.md` と同一に正規化する(CRITICAL/HIGH のみ・無ければ `NO_ISSUES`)。
+> 出力契約は `.claude/agents/reviewer.md` と同一に正規化する(CRITICAL/HIGH のみ・無ければ `NO_ISSUES`)。
 
 出力を `CURRENT_REVIEW` として保持。
 
@@ -47,6 +47,6 @@ codex exec "あなたは厳格なシニアコードレビュアー。次のパ�
 
 # 注意
 
-- 既定上限 **2** を黙って増やさない(`~/.claude/rules/loop-safety.md` のハードストップ準拠。引数で明示された場合のみ変更)。
+- 既定上限 **2** を黙って増やさない(`.claude/rules/loop-safety.md` のハードストップ準拠。引数で明示された場合のみ変更)。
 - **レビュー=外部モデル、修正=Claude の fixer** の分業を厳守。
-- 安全規律の正本は `~/.claude/rules/loop-safety.md`。
+- 安全規律の正本は `.claude/rules/loop-safety.md`。

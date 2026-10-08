@@ -10,7 +10,7 @@ These rules apply whenever any agent performs git operations — not just when `
 - Never stage `.env`, credential files, or any file matching `*.key`, `*.pem`, `*.secret`.
 - If changes span multiple unrelated purposes, split into separate commits.
 - Do not push after committing — the user pushes manually.
-- **Autonomous-run exception:** during `/autorun`, the user grants a one-time blanket approval for auto-commits at startup; per-commit approval is then waived (the message is still shown in the transcript each time). Without that approval, commit becomes a gate. See `docs/adr/008-orchestration-declarative-flow.md`.
+- **Autonomous-run exception:** during `/autorun`, the user grants a one-time blanket approval for auto-commits at startup; per-commit approval is then waived (the message is still shown in the transcript each time). Without that approval, commit becomes a gate. See claude-core の `docs/adr/008-orchestration-declarative-flow.md`.
 
 ### Branches
 - **Always branch from `develop`.** Pull the latest `develop` before creating any branch.
@@ -47,9 +47,9 @@ These rules apply whenever any agent performs git operations — not just when `
 
 ## Reference
 
-Format details (Conventional Commits type table / branch naming conventions / PR description template) are documented in `~/.claude/skills/git-workflow/SKILL.md`. Refer to it when generating commit messages, branch names, or PR descriptions.
+Format details (Conventional Commits type table / branch naming conventions / PR description template) are documented in `.claude/skills/git-workflow/SKILL.md`. Refer to it when generating commit messages, branch names, or PR descriptions.
 
-## コマンドの所在（公式委譲・[ADR-012](../docs/adr/012-official-plugins-for-git-review-security.md)）
+## コマンドの所在（公式委譲・[ADR-012](https://github.com/ShigetomoYamamoto/claude-core/blob/main/docs/adr/012-official-plugins-for-git-review-security.md)）
 
 - **コミット** → 公式 `/commit-commands:commit`（コミットのみ・push しない）。規約準拠は `commit-msg-convention.py` hook が機械的に担保。
 - **マージ済みローカルブランチ掃除** → 公式 `/commit-commands:clean_gone`。
