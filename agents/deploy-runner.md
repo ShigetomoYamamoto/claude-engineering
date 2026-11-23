@@ -195,9 +195,13 @@ For this platform the steps above are a detectable auto-rollback mechanism (reco
 deploy → verify → `wrangler rollback <id>`). So for **DB-less static Workers deploys**, deploy-runner
 reports "auto-rollback available" and `deploy_irreversible` evaluates to **false** (deploy is auto
 under vibing). It evaluates to **true (keep the gate)** when any of these holds: the contract lacks
-`no_db: true`, the project has DB/migration files or non-assets bindings in the wrangler config, it is a
-first deploy of a Worker that already serves real users, a gradual rollout is in progress, or the
-previous version id could not be recorded.
+`no_db: true`, the project has DB/migration files or non-assets bindings in the wrangler config, a
+gradual rollout is in progress, or step 2 failed for any reason other than "Worker does not exist / has
+no deployments" (auth, network, unparseable output).
+
+A **first deploy** (step 2 returned code 10007 / "has no deployments", i.e. the Worker does not exist yet)
+counts as **reversible** → `deploy_irreversible` = false: nobody uses the URL yet, and a failed first
+deploy is simply reported (step 5) and left as-is.
 
 ## Secrets
 
