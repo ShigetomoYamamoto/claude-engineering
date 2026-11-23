@@ -104,6 +104,15 @@ Reason:      <error detail>
 - `kubectl rollout undo deployment/<name> --to-revision=<n>` (specific)
 - Verify via `kubectl rollout status`
 
+### Cloudflare Workers
+- Wrangler 4 needs Node.js >= 22.12; run it as `npx --yes wrangler@4 ...` with credentials loaded inline
+  from the macOS Keychain (see "Secrets" in `agents/deploy-runner.md`; never print the token)
+- `npx --yes wrangler@4 deployments list --name <worker>` / `npx --yes wrangler@4 versions list --name <worker>` to find targets (add `--json` for machine output)
+- `npx --yes wrangler@4 deployments status --json --name <worker>` shows the active version(s)
+- `npx --yes wrangler@4 rollback <version-id> --name <worker> --message "<reason>" --yes` rolls back to that version at 100% of traffic (verified against wrangler 4.166.0 `--help`)
+- Limits: only the 100 most recent versions within retention; blocked by Durable Object lifecycle changes or deleted bound resources; bound resources (D1/KV/R2/DO) are not rolled back
+- Verify with a real request to the `*.workers.dev` URL plus the project's smoke checks; do not rely on the exit code alone
+
 ### Manual (Git-based deploys)
 - Identify the commit to rollback to
 - Trigger redeploy from that commit via CI

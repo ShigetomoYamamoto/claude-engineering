@@ -124,8 +124,8 @@ green を機械確認してからでないと前進・merge しない。
   TRUNCATE, RENAME (TABLE|COLUMN), `ALTER ... DROP`, or `DELETE` without `WHERE`. If the
   dry-run cannot be obtained or parsed → **true (gate)**.
 - `deploy_irreversible(target)` — true if deploy-runner cannot detect an auto-rollback
-  mechanism (vercel rollback / fly releases rollback / kubectl rollout undo, etc.). If
-  undetectable → **true (gate)**.
+  mechanism (vercel rollback / fly releases rollback / kubectl rollout undo / `wrangler rollback`
+  for DB-less Cloudflare Workers static sites, etc.). If undetectable → **true (gate)**.
 - `external_send(actions)` — true if the phase would send outward (slack/webhook/email/
   external API POST). If detected → **gate**.
 
