@@ -14,7 +14,7 @@
 | `skills/` | `git-workflow`（コミット/ブランチ/PR規約の参照スキル）と `review-html`（確認画面。`/autorun` のゲートとチャットの相談で使う。ADR-032・ADR-033）。コードを書く/直す段は `/autorun` を唯一の入口とし、`agents/tdd-guide.md`・`agents/planner.md` が実行部品を担う（旧`loop-engineering`スキルは ADR-025 で廃止・再配分） |
 | `hooks/` | 保護ブランチ編集ガード・git 破壊操作ブロック・PR base チェック・コミットメッセージ規約チェックと、それぞれのテスト |
 | `workflows/` | `large-scope-execute.js`（大規模タスクの計画→赤確認→実装→検証を回す Workflow） |
-| `templates/` | `init-autonomous/`（`/init-autonomous` コマンドが生成するプロジェクト側ファイルのテンプレート集） |
+| `templates/` | `init-autonomous/`（`/init-autonomous` コマンドが生成するプロジェクト側ファイルのテンプレート集）と `deploy/`（`deploy-runner` が使うデプロイ契約 `.claude/deploy.md` と Cloudflare Workers 用 `wrangler.jsonc` の雛形） |
 | `docs/` | `autorun-flow.md`（自走フローの遷移定義。プロジェクトへは `.claude/docs/autorun-flow.md` としてインストールされる） |
 | `installer.py` | インストールエンジン本体（core foundation と共有。差分検知・衝突保護・settings.json 構造マージなど） |
 | `install.py` | 本リポジトリ用の薄い配線（`Pack` 定義のみ。ロジックは `installer.py`） |

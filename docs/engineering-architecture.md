@@ -12,7 +12,7 @@
 | スキル | `skills/` | `git-workflow`（コミット/ブランチ/PR 規約の参照スキル）。コードを書く/直す段(旧`loop-engineering`スキル)は ADR-025 で廃止し、`agents/tdd-guide.md`(RED→GREEN)・`agents/planner.md`(VISION述語表)・`workflows/large-scope-execute.js`(大規模時)に再配分した |
 | フック | `hooks/` | 保護ブランチ編集ガード（`protected-branch-edit-guard.py`）・git 破壊操作ブロック（`git-destructive-blocker.py`）・PR base チェック（`pr-base-checker.py`）・コミットメッセージ規約チェック（`commit-msg-convention.py`）。各テストを同梱 |
 | ワークフロー | `workflows/` | `large-scope-execute.js`（大規模タスク向けの計画→赤確認→実装→検証を回す Workflow テンプレート） |
-| テンプレート | `templates/` | `init-autonomous/`（`/init-autonomous` コマンドが生成するプロジェクト側 CLAUDE.md・rules・commands・agents・docs 等のテンプレート） |
+| テンプレート | `templates/` | `init-autonomous/`（`/init-autonomous` コマンドが生成するプロジェクト側 CLAUDE.md・rules・commands・agents・docs 等のテンプレート）と `deploy/`（デプロイ契約 `.claude/deploy.md` と Cloudflare Workers 用 `wrangler.jsonc` の雛形） |
 | ドキュメント | `docs/` | `autorun-flow.md`（自走フローの遷移定義。導入先では `.claude/docs/autorun-flow.md` として配置される） |
 
 ## 自走フロー（Loop Engineering）とこのリポジトリの関係

@@ -1,0 +1,10 @@
+// Minimal Cloudflare Workers config for an assets-only (static) site.
+// Copy to the project root as `wrangler.jsonc` and replace the <placeholders>.
+// No `main` is needed: with only `assets`, Workers serves the directory as a static site.
+{
+  "name": "<worker-name>",
+  "compatibility_date": "<YYYY-MM-DD>", // use the date you create the project
+  "assets": {
+    "directory": "./<assets-dir>" // e.g. ./public or ./dist
+  }
+}
