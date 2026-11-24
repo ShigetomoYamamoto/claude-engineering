@@ -15,11 +15,16 @@ Account IDs are not secrets, but do not commit them to a public repository: name
 - account_id_source: target                  # target = read from the user-level file above; env = CLOUDFLARE_ACCOUNT_ID already set
 - keychain_service: from-target              # from-target = use the target's value; or a literal macOS Keychain service name
 - no_db: true                                # declaration: no database, no migrations, no D1/KV/R2/Durable Objects bindings
+- asset_check: all                           # optional, default all. all = the referenced files plus every other non-HTML file under assets_dir (lazy chunks included); referenced = only files linked from the smoke-check pages
 
 ## Smoke checks
 
-Run after deploy against the `*.workers.dev` URL (wait ~10 s for propagation first).
-Every check must pass (HTTP 200 and the expected text present in the body).
+Run after deploy against the `*.workers.dev` URL inside the verify window: the first round about 10 s after the
+deploy returns, retried until every check passes, with a hard deadline of 90 s (details: `deploy-runner` agent,
+Cloudflare Workers step 4). Every smoke check and every asset URL must pass in the same round. Write paths in
+canonical form (`/about`, `/docs/`; not `/about.html` or `/docs`): redirects are not followed, so a path that
+redirects never passes. The expected text must also exist in the previous version, because the same smoke checks
+run after an automatic rollback.
 
 | path | expected text |
 |------|---------------|
