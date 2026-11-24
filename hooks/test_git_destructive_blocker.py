@@ -21,6 +21,7 @@ import shutil
 import subprocess
 import tempfile
 import unittest
+import warnings
 
 HOOK = os.path.join(os.path.dirname(os.path.abspath(__file__)), "git-destructive-blocker.py")
 
@@ -684,6 +685,14 @@ class BypassGuardTest(unittest.TestCase):
         self.blocked("find .git/hooks -type f -delete")
         self.blocked("find .git/hooks -exec rm {} +")
         self.allowed("find .git/hooks -type f")
+
+    # --- hook 自体のソースに不正なエスケープ等の警告が無い (毎回 stderr に SyntaxWarning が出る回帰防止) ---
+    def test_hook_source_compiles_without_warnings(self):
+        with open(HOOK, encoding="utf-8") as f:
+            source = f.read()
+        with warnings.catch_warnings():
+            warnings.simplefilter("error")
+            compile(source, HOOK, "exec")
 
 
 if __name__ == "__main__":

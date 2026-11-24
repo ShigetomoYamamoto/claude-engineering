@@ -9,7 +9,7 @@ include.path の設定 (c) claudeguard の書換 (d) GIT_CONFIG_* / CLAUDECODE �
 (e) git send-pack・保護 ref への update-ref (f) .git/hooks の変更 (find -delete 含む)
 (g) git diff/log/show の --output (任意ファイルへ書込める) (h) push/fetch/pull/ls-remote/clone/archive の
 --upload-pack・--receive-pack・--exec (省略形・clone -u・fetch-pack・upload-archive も。任意プログラムを実行できる)
-と git --exec-path=<dir>。(h) は引用符・\ を除いて照合し、fetch 等の後ろの旗の値 (-t "--upload-pack=x") は除かない
+と git --exec-path=<dir>。(h) は引用符・\\ を除いて照合し、fetch 等の後ろの旗の値 (-t "--upload-pack=x") は除かない
 (i) curl / wget の出力先 (-o・--output・-O 等) が .git/・.claude/ 配下 (保護対象のファイルを curl で上書きする経路)。
 読取 (--get/--list・get/list 構文・値引数の無い `git config <key>`) は許可。(b)(c) は git config / -c / --config-env
 を実際に呼ぶセグメントだけが対象。CLAUDECODE の代入は文頭・; & | ( の直後・export/env 等の後だけ見る。
