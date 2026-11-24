@@ -11,6 +11,7 @@ include.path の設定 (c) claudeguard の書換 (d) GIT_CONFIG_* / CLAUDECODE �
 --upload-pack・--receive-pack・--exec (省略形・clone -u・fetch-pack・upload-archive も。任意プログラムを実行できる)
 と git --exec-path=<dir>。(h) は引用符・\\ を除いて照合し、fetch 等の後ろの旗の値 (-t "--upload-pack=x") は除かない
 (i) curl / wget の出力先 (-o・--output・-O 等) が .git/・.claude/ 配下 (保護対象のファイルを curl で上書きする経路)。
+(a)(f)(g) も引用符・\\ を除いた版で照合する ("--no-ver""ify" 等の分割対策)。
 読取 (--get/--list・get/list 構文・値引数の無い `git config <key>`) は許可。(b)(c) は git config / -c / --config-env
 を実際に呼ぶセグメントだけが対象。CLAUDECODE の代入は文頭・; & | ( の直後・export/env 等の後だけ見る。
 散文の誤検知対策: シェルコメント、クォート付き heredoc の本文、-m/--message/--body/-b/--title/-t の
@@ -163,14 +164,16 @@ def bypass_reason(cmd):
     s = strip_comments(cmd)  # コメントを先に除く (後だと `# <<'EOF'` で後続行が散文扱いになる)
     c = scrub_prose(s)
     rp = re.sub(r'["\'\\]', '', scrub_prose(s, keep_rp=True))  # 引用符・\ を除いた版 (--rec"eive-pack 対策。(h)(i) 用)
+    cq = re.sub(r'["\'\\]', '', c)  # c から引用符・\ を除いた版 (--no-ver""ify 等の分割対策。--no-verify・--output・.git/hooks 用)
     if dl_writes_protected(rp):
         return '保護対象のファイルを curl/wget で上書きしようとしています (出力先が .git/・.claude/ 配下。hook や設定の差替えに使える)'
     if re.search(_CC + r'|\bunset\b[^;&|\n]*\bCLAUDECODE\b'
                  r'|\benv\b[^;&|\n]*(?:-u\s*|--unset[=\s])CLAUDECODE\b', c, re.I | re.M):
         return 'CLAUDECODE の改変 (git hook は CLAUDECODE=1 のときだけ作用します)'
-    if 'git' not in c.lower():
+    if 'git' not in cq.lower():
         return None
-    if re.search(r'(?i:--no-veri)', c) or re.search(_sub('commit') + r'[^;&|\n]*?\s-[A-Za-z]*n[A-Za-z]*(?=[\s;&|)"\']|$)', c):
+    if any(re.search(r'(?i:--no-veri)', t) or re.search(_sub('commit') + r'[^;&|\n]*?\s-[A-Za-z]*n[A-Za-z]*(?=[\s;&|)"\']|$)', t)
+           for t in (c, cq)):
         return '--no-verify / git commit -n (pre-commit・pre-push 等を飛ばす)'
     if re.search(r'(?<![$\w{])GIT_CONFIG_(?:GLOBAL|SYSTEM|NOSYSTEM|COUNT|PARAMETERS|KEY_\d+|VALUE_\d+)\+?=', c) \
             or re.search(r'(?<![\w.])env\s+(?:-\S+\s+)*(?:-[A-Za-z]*i|--ignore-environment)\b', c):
@@ -179,7 +182,7 @@ def bypass_reason(cmd):
         return 'git send-pack (pre-push が走らない)'
     if re.search(_sub('update-ref') + r'[^;&|\n]*?(?i:(?:refs/)?heads/(?:' + '|'.join(PROTECTED) + r')(?![\w.-]))', c):
         return '保護ブランチの ref を直接動かす git update-ref'
-    if re.search(_sub('(?:diff|log|show)') + r'[^;&|\n]*?(?<![\w-])--output(?![\w-])', c):
+    if any(re.search(_sub('(?:diff|log|show)') + r'[^;&|\n]*?(?<![\w-])--output(?![\w-])', t) for t in (c, cq)):
         return 'git diff/log/show の --output (任意のファイルへ書込める。.git/hooks の上書き等に使える)'
     if re.search(_sub(_RP_CMDS) + r'[^;&|\n]*?' + _RP_OPT, rp) \
             or re.search(_sub('clone') + r'[^;&|\n]*?\s-[A-Za-z]*u', rp) \
@@ -191,6 +194,9 @@ def bypass_reason(cmd):
                 return 'core.hooksPath / include.path の設定・上書き'
             if re.search(r'(?i:claudeguard)', seg):
                 return 'claudeguard (リポジトリ単位の無効化キー) の書換'
+        if re.search(HOOKS, seg) and re.search(MUTATE, seg):
+            return '.git/hooks の変更'
+    for seg in re.split(r'&&|\|\||[;|\n]', cq):  # 引用符・\ で分けた ".git/""hooks" 対策
         if re.search(HOOKS, seg) and re.search(MUTATE, seg):
             return '.git/hooks の変更'
     return None
