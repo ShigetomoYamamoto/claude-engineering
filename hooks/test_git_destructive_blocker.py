@@ -555,6 +555,52 @@ class BypassGuardTest(unittest.TestCase):
         self.allowed("git log --format=%s > /tmp/out.txt")
         self.allowed("git log --oneline | tee /tmp/out.txt")
 
+    # --- h. リモートヘルパーのプログラム実行オプション (--upload-pack / --receive-pack / --exec) ---
+    def test_remote_helper_program_options_blocked(self):
+        for cmd in ("git fetch origin --upload-pack=x", "git fetch origin --upload-pack x",
+                    "git pull origin --upload-pack=x", "git pull --upload-pack x origin",
+                    "git push origin --receive-pack=x", "git push origin --receive-pack x",
+                    "git push origin --exec=x", "git push origin --exec x",
+                    "git push origin feature/x --exec=x",
+                    "git ls-remote --upload-pack=x origin", "git ls-remote --upload-pack x origin",
+                    "git ls-remote --exec=x origin", "git ls-remote origin --exec x",
+                    "git clone --upload-pack=x https://example.com/r.git",
+                    "git clone --upload-pack x https://example.com/r.git",
+                    "git -C . fetch origin --upload-pack=x", "/usr/bin/git fetch origin --upload-pack=x",
+                    "git archive --remote=origin --exec=x HEAD", "git push origin '--exec=x'"):
+            self.blocked(cmd)
+
+    def test_remote_helper_option_abbreviations_blocked(self):
+        # git は曖昧でない省略形を受理する (実測: push --e/--exe、fetch --upl、ls-remote --u、push --rece)
+        for cmd in ("git push origin --e x", "git push origin --exe=x", "git fetch origin --upl=x",
+                    "git pull origin --upload x", "git ls-remote --u x origin", "git push origin --rece=x",
+                    "git clone --upl x https://example.com/r.git",
+                    "git clone -u x https://example.com/r.git", "git clone -qu x https://example.com/r.git"):
+            self.blocked(cmd)
+
+    def test_exec_path_assignment_blocked_but_read_allowed(self):
+        self.blocked("git --exec-path=/tmp/x status")
+        self.blocked("git -C . --exec-path=/tmp/x status")
+        self.allowed("git --exec-path")
+
+    def test_remote_helper_option_neighbours_allowed(self):
+        for cmd in ("git fetch origin --prune", "git push origin --force-with-lease feature/x",
+                    "git push -u origin feature/x", "git push origin --recurse-submodules=check",
+                    "git ls-remote --exit-code origin", "git ls-files --exclude=x",
+                    "git clone --recursive https://example.com/r.git",
+                    "git clone -q -b main https://example.com/r.git",
+                    "git rebase --exec true main"):  # push/fetch 系以外の --exec (ローカル) は対象外
+            self.allowed(cmd)
+
+    def test_remote_helper_option_prose_allowed(self):
+        self.allowed('git commit -m "docs: git fetch origin --upload-pack=x runs a program"')
+        self.allowed(
+            "git commit -m \"$(cat <<'EOF'\n"
+            "fix: block --upload-pack, --receive-pack and --exec\n\n"
+            "git push origin --exec=x and git --exec-path=/tmp/x are examples\n"
+            "EOF\n)\""
+        )
+
     # --- find -delete での .git/hooks 削除 ---
     def test_find_delete_in_git_hooks_blocked(self):
         self.blocked("find .git/hooks -type f -delete")

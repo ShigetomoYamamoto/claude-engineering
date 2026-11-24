@@ -7,7 +7,9 @@ CLAUDECODE=1 のときだけ作用)。本 hook はその補完で、hook を飛�
 迂回経路のブロック: (a) --no-verify (省略形 --no-veri 以降も) / git commit -n (b) core.hooksPath・
 include.path の設定 (c) claudeguard の書換 (d) GIT_CONFIG_* / CLAUDECODE の改変 (env -i も)
 (e) git send-pack・保護 ref への update-ref (f) .git/hooks の変更 (find -delete 含む)
-(g) git diff/log/show の --output (任意ファイルへ書込める)。読取 (--get/--list・get/list 構文・
+(g) git diff/log/show の --output (任意ファイルへ書込める) (h) push/fetch/pull/ls-remote/clone/archive の
+--upload-pack・--receive-pack・--exec (省略形・clone -u も。任意プログラムを実行できる) と git --exec-path=<dir>。
+読取 (--get/--list・get/list 構文・
 値引数の無い `git config <key>`) は許可。(b)(c) は git config / -c / --config-env を実際に呼ぶ
 セグメントだけが対象。CLAUDECODE の代入は文頭・; & | ( の直後・export/env 等の後だけ見る。
 散文の誤検知対策: シェルコメント、クォート付き heredoc の本文、-m/--message/--body/-b/--title/-t の
@@ -86,6 +88,14 @@ _CC = (r'(?:^|[;&|(`]|\{\s|\b(?:export|declare|typeset|readonly|env|time|nohup|e
        r'|\b(?:(?:ba|z|da|k)?sh\s+-\w+|eval)\s+["\']?)\s*(?:-\S+\s+(?:[^\s=-][^\s=]*\s+)?)*'
        rf'(?:\w+={_VAL}\s+)*CLAUDECODE\+?=')
 
+# 任意プログラムを実行するリモートヘルパーのオプション。git は曖昧でない省略形も受理する
+# (実測: push --e/--exe、fetch --upl、ls-remote --u、push --rece 等) ので、接頭辞をすべて照合する。
+# --exec-path は別物 (接頭辞にならない) なので `(?![\w-])` で外れる。
+_RP_NAMES = ('upload-pack', 'receive-pack', 'exec')
+_RP_OPT = (r'(?<![\w-])--(?:' + '|'.join(sorted({n[:i] for n in _RP_NAMES for i in range(1, len(n) + 1)},
+           key=len, reverse=True)) + r')(?![\w-])')
+_RP_CMDS = '(?:push|fetch|pull|ls-remote|clone|archive)'
+
 def strip_comments(s):
     """行頭または空白直後の # から行末までを除く。クォート (改行をまたぐ) と \\x の中の # は残す。"""
     return re.sub(r'''(\\.|"(?:[^"\\]|\\.)*"|'[^']*')|(?:^|(?<=\s))#[^\n]*''',
@@ -133,6 +143,10 @@ def bypass_reason(cmd):
         return '保護ブランチの ref を直接動かす git update-ref'
     if re.search(_sub('(?:diff|log|show)') + r'[^;&|\n]*?(?<![\w-])--output(?![\w-])', c):
         return 'git diff/log/show の --output (任意のファイルへ書込める。.git/hooks の上書き等に使える)'
+    if re.search(_sub(_RP_CMDS) + r'[^;&|\n]*?' + _RP_OPT, c) \
+            or re.search(_sub('clone') + r'[^;&|\n]*?\s-[A-Za-z]*u', c) \
+            or re.search(r'\bgit' + _OPTS + r'\s+--exec-path=', c):
+        return 'リモートヘルパーのプログラム実行オプション (--upload-pack / --receive-pack / --exec / clone -u / --exec-path=)'
     for seg in re.split(r'&&|\|\||[;|\n]', c):
         if re.search(_CFG, seg) and not _is_read(seg):
             if re.search(r'(?i:core\.hookspath|\binclude(?:if\.\S*)?\.path)', seg):
