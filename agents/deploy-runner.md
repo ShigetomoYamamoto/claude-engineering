@@ -83,7 +83,7 @@ Run verification:
 - Smoke tests if defined
 - Compare key metrics if available (5xx error rate, latency)
 
-Wait time: default 30 seconds for the new version to propagate. Configurable per project (the Cloudflare Workers section below uses about 10 seconds, which static-assets Workers need).
+Wait time: default 30 seconds for the new version to propagate. Configurable per project (the Cloudflare Workers section below replaces the fixed wait with a bounded verify window of up to 90 seconds, because static-assets Workers need retries, not a longer single wait).
 
 ### Phase 5: Auto-Rollback (on failure)
 
@@ -175,13 +175,70 @@ from the contract's `target` (user-level file) or the environment. Both are set 
      `npx --yes wrangler@4 deploy --help`.
    - `--dry-run` (compile and check without uploading) is the safe way to validate the setup; never use
      any other command to "test" a deploy against a real account.
-4. **Verify**: wait about 10 seconds, then for every smoke check in the contract request
-   `https://<worker>.<subdomain>.workers.dev<path>` (e.g. `curl -sS -o <body file> -w '%{http_code}' <url>`)
-   and require HTTP 200 **and** the expected text in the body. Re-check once after 10 more seconds
-   before declaring failure (propagation lag; counts toward the 2-attempt cap below).
-5. **On verification failure**: 
-   - `PREV_VERSION` known → `npx --yes wrangler@4 rollback <PREV_VERSION> --message "auto-rollback: <reason>" --yes`,
-     then run the smoke checks again once. Report both the failed deploy and the rollback result.
+4. **Verify** inside one bounded *verify window* that ends **90 seconds after `wrangler deploy` returns** (T0),
+   however many rounds ran. Right after a deploy, locations that have not yet received the new version can still
+   answer for the old one (Cloudflare calls this deployment propagation; HTML and asset requests can be served by
+   different versions meanwhile), so a single check at 10 s can hit a 404 on a healthy version. Observed on an
+   assets-only Worker with about 32 files: one asset returned 404 at 10 s, a different one at 20 s, and all
+   returned 200 a few seconds later.
+   - **URL list**: build it once, from the contract and the local `assets_dir`, never from a fetched page (a
+     lagging location may return the old version's page). Percent-encode paths that come from the filesystem
+     (item 3) per path **segment**, keeping the `/` separators (observed in `wrangler dev`: an encoded `%2F` is
+     redirected or answered 404). Use `src` / `href` values from HTML (item 2) as written, resolved against the
+     page's path (`app.js` on `/docs/` → `/docs/app.js`); they are usually encoded already.
+     1. **Smoke-check pages**: every smoke-check path in the contract. This is the **primary gate**: HTTP 200
+        **and** the expected text in the body.
+     2. **Referenced assets**: every same-origin file that the smoke-check pages link, read from the local build
+        output (`/` → `index.html`; `/x/` → `x/index.html`; `/x` → `x.html`, else `x/index.html`): `src` of
+        `script` / `img` / `source`, and `href` of `link` only when `rel` is `stylesheet`, `modulepreload`,
+        `preload`, `icon`, `apple-touch-icon` or `manifest` (a canonical or alternate `link` points to a page).
+        Skip `<a>` links and `.html` targets, and drop query strings and fragments.
+     3. **All other assets**, unless the contract sets `asset_check: referenced`: every other non-HTML file under
+        `assets_dir`, lazy chunks included. `index.html` links only the entry files, but a 404 on a lazily loaded
+        chunk breaks a screen while `/` still passes. Leave out what wrangler does not upload: `.assetsignore`,
+        `_redirects` and `_headers` in the root of `assets_dir` (wrangler 4.167.0 source), and `*.html` / `*.htm` files (the
+        default `html_handling` answers `/x.html` with a 307 redirect, so HTML pages are covered by item 1). If
+        `assets_dir/.assetsignore` has any pattern line, wrangler also drops the files it matches: do not
+        re-implement that matching, use `referenced` for that project and say so in the report. Likewise use
+        `referenced`, and say so, if more than 500 files remain after these exclusions.
+   - **Round**: request every URL once, without following redirects, a few at a time (e.g. `xargs -P 8`).
+     Smoke-check pages: GET, e.g. `curl -sS --max-time 10 -o <body file> -w '%{http_code}' <url>`. Assets: HEAD,
+     e.g. `curl -sS --head --max-time 5 -o /dev/null -w '%{http_code} %{content_type}' <url>` (no body is
+     transferred, so a large file cannot time out; if assets answer HEAD with 405, use GET with `-o /dev/null`
+     instead and say so in the report). A round is **green** only if every smoke-check page is 200 with its
+     expected text **and** every asset is 200 whose Content-Type media type (the part before any `;`) is not
+     `text/html` (with `not_found_handling: single-page-application` a missing file is answered 200 with
+     `index.html`). A transport error or timeout counts as red. Bound each round without `timeout` (macOS has
+     none): before sending a request check `date +%s`; at T0 + 90 s or later do not send it and count it red,
+     otherwise set `--max-time` to the smaller of the cap above and T0 + 90 − now.
+   - **Schedule**: run the whole window as **one** Bash command (a short script that waits for each start time,
+     runs the round and prints one line per round) with the command timeout set to at least 120 s. Do not split
+     the rounds over separate tool calls and do not run rounds back to back to save time. Start times are
+     measured from T0: take `date +%s` right after `wrangler deploy` returns, print it, and write it into the
+     window script as a literal number (shell state does not persist between tool calls). Round 1 at T0 + 10 s,
+     then, while a round is red, at T0 + 15, 25, 40, 60 and 80 s. If a start time has already passed (the previous
+     round is still running, or the script started late), start that round at once; never start a round after
+     T0 + 80 s. The first green round ends the window with success. Re-check the **whole** list every round and
+     do not carry a pass over: during propagation the same URL can be answered by the old and the new version in
+     turn.
+   - **Failure** means the last round (the last one started at or before T0 + 80 s) is red. Report the URLs that
+     were red in that round with their HTTP codes. Also report URLs that were red earlier but recovered, with the
+     time (evidence of lag, not a failure).
+   - **Limit**: a green window shows that the smoke-check text and the listed files are served. With non-hashed
+     file names, a version that is still the old one everywhere looks the same, so the window cannot prove that
+     the new version is live; with hashed names (typical build output) the new names 404 until it is.
+   - **Attempt cap (invariant 3)**: all rounds of one window are **one** verify attempt. The cap counts windows
+     (verify window → rollback → post-rollback window), not rounds. Worst-case wait is 90 s + the rollback
+     command + 90 s; after that STOP and report.
+5. **On verification failure**:
+   - `PREV_VERSION` known → `npx --yes wrangler@4 rollback <PREV_VERSION> --message "auto-rollback: <reason>" --yes`.
+     If that command exits non-zero, STOP and report; run no further window. Otherwise confirm with
+     `npx --yes wrangler@4 deployments status --json --name <worker_name>` (read-only, as in step 2) that
+     `PREV_VERSION` is now at 100%; if it is not, STOP and report. Then run **one more verify window** (step 4: same
+     schedule and 90 s deadline, T0 = when the rollback command returned) and **no second rollback** after it.
+     The restored version is the previous build, so its asset file names differ from the local `assets_dir`:
+     check the smoke-check pages only, not the asset list. If it is still red at the deadline, STOP and report.
+     Report both the failed deploy and the rollback result.
    - First deploy (`PREV_VERSION` empty) → there is nothing to roll back to. Report the failure and leave
      the new Worker as it is (no users yet). **Do not delete it** (`wrangler delete` is never run by this agent).
 6. Useful read-only commands: `npx --yes wrangler@4 deployments list --name <worker_name>`,
