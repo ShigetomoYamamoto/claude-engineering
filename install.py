@@ -4,6 +4,10 @@
 Installs the engineering development workflow into ONE explicitly named project's
 .claude directory. Requires --project /abs/path. Refuses a project already managed
 by claude-work-agent. Never targets ~/.claude. See installer.py for the engine.
+
+install/update also put the git-native guard (git-hooks/guard.sh) into that project's
+repository hooks, per repository, never globally; --no-git-hooks skips that step.
+Exit code 3 = conflict (see git-hooks/README.md).
 """
 from pathlib import Path
 import sys
@@ -16,6 +20,7 @@ PACK = Pack(
     managed_paths=["rules", "commands", "agents", "skills", "hooks", "workflows", "templates", "docs"],
     settings_fragment="settings-fragment.json",
     other_domain_manifests=[".claude-work-agent.manifest.json"],
+    git_hooks_source="git-hooks/guard.sh",  # NOT in managed_paths: copied into .git/hooks, never into .claude
 )
 
 _ACTIONS = ("install", "update", "uninstall", "verify")
@@ -32,7 +37,7 @@ def _require_action(argv):
     if any(a in _ACTIONS for a in argv):
         return
     print(
-        f"usage: {_ALIAS} <{'|'.join(_ACTIONS)}> [--dry-run] [--force] [--project /abs/path]\n"
+        f"usage: {_ALIAS} <{'|'.join(_ACTIONS)}> [--dry-run] [--force] [--no-git-hooks] [--project /abs/path]\n"
         f"no action given -- cd into your target project, then e.g. `{_ALIAS} install`.",
         file=sys.stderr,
     )
