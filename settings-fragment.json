@@ -1,6 +1,52 @@
 {
   "permissions": {
-    "allow": ["Bash(git *)", "Bash(gh *)", "Bash(claude *)", "Bash(curl *)"]
+    "allow": [
+      "Bash(git status *)",
+      "Bash(git diff *)",
+      "Bash(git log *)",
+      "Bash(git show *)",
+      "Bash(git branch *)",
+      "Bash(git rev-parse *)",
+      "Bash(git ls-files *)",
+      "Bash(git add *)",
+      "Bash(git commit *)",
+      "Bash(git checkout *)",
+      "Bash(git switch *)",
+      "Bash(git restore *)",
+      "Bash(git worktree *)",
+      "Bash(git fetch)",
+      "Bash(git fetch origin *)",
+      "Bash(git pull)",
+      "Bash(git pull origin *)",
+      "Bash(git push)",
+      "Bash(git push origin *)",
+      "Bash(git push -u origin *)",
+      "Bash(gh pr create *)",
+      "Bash(gh pr view *)",
+      "Bash(gh pr checks *)",
+      "Bash(gh pr list *)",
+      "Bash(gh pr diff *)",
+      "Bash(gh issue view *)",
+      "Bash(gh issue list *)",
+      "Bash(gh run watch *)",
+      "Bash(gh run view *)",
+      "Bash(gh run list *)",
+      "Bash(curl -sS --max-time * -o * -w *)",
+      "Bash(curl -sS --head --max-time * -o /dev/null -w *)"
+    ],
+    "deny": [
+      "Bash(curl * -d*)",
+      "Bash(curl * --data*)",
+      "Bash(curl * --json*)",
+      "Bash(curl * -F*)",
+      "Bash(curl * --form*)",
+      "Bash(curl * -T*)",
+      "Bash(curl * --upload-file*)",
+      "Bash(curl * -X*)",
+      "Bash(curl * --request*)",
+      "Bash(curl * -K*)",
+      "Bash(curl * --config*)"
+    ]
   },
   "hooks": {
     "PreToolUse": [

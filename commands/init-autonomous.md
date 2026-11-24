@@ -272,7 +272,7 @@ PYEOF
 ### 4-0. `.claude/settings.json`（プロジェクト固有の権限設定）
 
 検出したスタックに応じて、`auto` モードで確認なしに実行できるコマンドを定義する。
-**git は グローバル設定で `Bash(git *)` / `Bash(gh *)` として許可済みのため含めない。**
+**git / gh の基本操作（status・diff・log・add・commit・checkout・push origin・gh pr create 等）は engineering パックの `settings-fragment.json` が許可済みなので、ここには含めない。許可の範囲は README「権限 (`permissions.allow`) の方針」を参照。**
 
 以下の手順で生成する（複数スタック検出時は `allow` 配列を自動マージ）:
 
