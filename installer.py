@@ -22,6 +22,11 @@ Design summary
   existing file is backed up first and then overwritten.
 - Every write/delete is boundary-checked: the resolved path must be inside
   the resolved target directory, or the operation refuses to proceed.
+- A pack may also install a git-native guard into the target's repository
+  (`Pack.git_hooks_source`, see "git hooks" below; `--no-git-hooks` skips it).
+  That step runs AFTER the managed copy has been applied; if it hits a conflict
+  (foreign hook, core.hooksPath) it returns exit code 3 -- so 3 means "nothing
+  was written" for a plan conflict but "applied, except the git hooks" here.
 - `settings.json` is never blindly overwritten. Only the fragment's own keys
   are merged in (see `_merge_settings_dict`), a live key is never deleted
   (PreToolUse/PostToolUse swap only this pack's own hooks, ADR-031),
@@ -95,6 +100,8 @@ class Pack:
     managed_paths: List[str]
     settings_fragment: Optional[str] = None
     other_domain_manifests: List[str] = field(default_factory=list)
+    # Repo-relative script installed as the per-repository git hooks (see "git hooks" below).
+    git_hooks_source: Optional[str] = None
 
     def __post_init__(self) -> None:
         if self.kind not in ("global", "project"):
@@ -626,11 +633,147 @@ def _cross_domain_conflict(pack: Pack, target: Path) -> Optional[str]:
 
 
 # ---------------------------------------------------------------------------
+# git hooks (per repository, never global)
+# ---------------------------------------------------------------------------
+
+# `Pack.git_hooks_source` is copied (byte for byte, mode 0755) as these three hooks into <git common dir>/hooks.
+# Ours = 2nd line starts with "# <pack.name>:guard" (+ sha256 for freshness). Anything else at those paths, or a
+# set core.hooksPath, is a conflict: never overwritten (not even with --force). git-hooks/ is NOT in managed_paths.
+GIT_HOOK_NAMES = ("pre-commit", "pre-merge-commit", "pre-push")
+FOREIGN = "FOREIGN"
+
+
+_GIT_REPO_ENV = ("GIT_DIR", "GIT_COMMON_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE")  # would re-point `git -C`
+
+
+def _git(cwd: Path, *args: str) -> Optional[str]:
+    env = {k: v for k, v in os.environ.items() if k not in _GIT_REPO_ENV}
+    try:
+        r = subprocess.run(["git", "-C", str(cwd), *args], capture_output=True, text=True, timeout=10, check=False,
+                           env=env)
+    except (OSError, subprocess.SubprocessError):
+        return None
+    return r.stdout.strip() if r.returncode == 0 else None
+
+
+def path_within_git_hooks(hooks_dir: Path, name: str) -> Path:
+    """Boundary guard for the git-hook step: exactly the three managed names, directly inside hooks_dir."""
+    if name not in GIT_HOOK_NAMES:
+        raise BoundaryViolation(f"refusing to touch git hook {name!r}: only {', '.join(GIT_HOOK_NAMES)} are managed")
+    return hooks_dir / name
+
+
+def _locate_git_hooks(target: Path):
+    """(<git common dir>/hooks, core.hooksPath or None); hooks dir is None outside a git repository."""
+    # The repo is the PROJECT's: probe from the parent of the .claude target (a repo nested AT .claude must not
+    # receive the hooks), from its nearest existing ancestor (a --dry-run target may not exist yet).
+    probe = target.parent if target.name == ".claude" else target
+    while not probe.exists() and probe != probe.parent:
+        probe = probe.parent
+    common = _git(probe, "rev-parse", "--path-format=absolute", "--git-common-dir")
+    if not common or not os.path.isabs(common):
+        return None, None
+    return Path(common) / "hooks", _git(probe, "config", "--get", "core.hooksPath") or None
+
+
+def _git_hook_state(src: Path, dest: Path, marker: bytes) -> str:
+    try:
+        if dest.is_symlink() or dest.parent.is_symlink() or (dest.exists() and not dest.is_file()):
+            return FOREIGN
+        if not dest.exists():
+            return NEW
+        lines = dest.read_bytes()[:512].split(b"\n")
+        if len(lines) < 2 or not lines[1].startswith(marker):
+            return FOREIGN
+        same = sha256_file(dest) == sha256_file(src) and os.access(dest, os.X_OK)
+        return UNCHANGED if same else UPDATE
+    except OSError:
+        return FOREIGN
+
+
+def _git_hook_states(pack: Pack, hooks_dir: Path):
+    """[(name, dest, state)]: NEW (absent) | UNCHANGED | UPDATE (ours, content or mode differs) | FOREIGN."""
+    src, marker = pack.repo_root / pack.git_hooks_source, f"# {pack.name}:guard".encode()
+    dests = [(n, path_within_git_hooks(hooks_dir, n)) for n in GIT_HOOK_NAMES]
+    return [(n, d, _git_hook_state(src, d, marker)) for n, d in dests]
+
+
+def _git_hooks_step(pack: Pack, target: Path, enabled: bool, dry_run: bool) -> int:
+    """install/update step. EXIT_OK, or EXIT_CONFLICT after a summary on stderr."""
+    if not (enabled and pack.git_hooks_source):
+        return EXIT_OK
+    hooks_dir, hooks_path = _locate_git_hooks(target)
+    print(f"\n=== {pack.name}: git hooks{' (dry-run, nothing written)' if dry_run else ''} ===")
+    conflicts: List[str] = []
+    if hooks_dir is None:
+        print(f"info: {target} is not inside a git repository; git hooks skipped")
+    elif hooks_path:
+        print(f"[SKIPPED] core.hooksPath={hooks_path}")
+        conflicts.append(f"core.hooksPath is set ({hooks_path}), so git does not read {hooks_dir}. Nothing was "
+                         "installed: the git-native guard is NOT active in this repository.")
+    else:
+        for name, dest, state in _git_hook_states(pack, hooks_dir):
+            print(f"[{state}] {dest}")
+            if state == FOREIGN:
+                conflicts.append(f"{dest} exists and is not ours (no '# {pack.name}:guard' marker, or a symlink). "
+                                 f"Left untouched, even with --force: the guard is NOT active for {name}.")
+            elif state in (NEW, UPDATE) and not dry_run:
+                try:
+                    dest.parent.mkdir(parents=True, exist_ok=True)
+                    shutil.copyfile(pack.repo_root / pack.git_hooks_source, dest)
+                    os.chmod(dest, 0o755)
+                except OSError as exc:
+                    conflicts.append(f"{dest} could not be written ({exc}): the guard is NOT active for {name}.")
+    if not conflicts:
+        return EXIT_OK
+    sys.stdout.flush()  # keep the summary last when stdout and stderr share a pipe
+    print(f"\nCONFLICT: {len(conflicts)} git hook problem(s). Everything else was applied. "
+          f"Exit code {EXIT_CONFLICT}.", file=sys.stderr)
+    for c in conflicts:
+        print(f"  - {c}", file=sys.stderr)
+    return EXIT_CONFLICT
+
+
+def _git_hooks_uninstall(pack: Pack, target: Path, dry_run: bool) -> None:
+    """Remove only hooks that carry our marker; anything else stays. Works even if core.hooksPath is set."""
+    hooks_dir, _ = _locate_git_hooks(target)
+    for _, dest, state in _git_hook_states(pack, hooks_dir) if hooks_dir else []:
+        if state in (UNCHANGED, UPDATE):
+            print(f"[REMOVE] git hook {dest}")
+            if not dry_run:
+                dest.unlink()
+        elif state == FOREIGN:
+            print(f"note: left in place (not ours): {dest}")
+
+
+def _git_hooks_verify(pack: Pack, target: Path) -> bool:
+    """Print git hook status; True = a hook is missing/modified/foreign. Skipped cases are info, not failure."""
+    hooks_dir, hooks_path = _locate_git_hooks(target)
+    if hooks_dir is None:
+        print("info: git hooks not checked (not inside a git repository)")
+        return False
+    if hooks_path:  # not a verify failure (legitimately skipped), but say loudly that nothing is guarding
+        print(f"WARNING: core.hooksPath={hooks_path} is set, so git does not read {hooks_dir}: "
+              "the git-native guard is NOT active in this repository (git hooks not checked)")
+        return False
+    states = {n: s for n, _, s in _git_hook_states(pack, hooks_dir)}
+    print(f"git hooks ({hooks_dir}):")
+    print(f"OK: {sum(s == UNCHANGED for s in states.values())}")
+    for state, label in ((UPDATE, "MODIFIED"), (NEW, "MISSING"), (FOREIGN, "FOREIGN")):
+        names = [n for n, s in states.items() if s == state]
+        if names:
+            print(f"{label}: {len(names)}")
+            for n in names:
+                print(f"  - {n}")
+    return any(s != UNCHANGED for s in states.values())
+
+
+# ---------------------------------------------------------------------------
 # install / update
 # ---------------------------------------------------------------------------
 
 
-def install_or_update(pack: Pack, target: Path, force: bool, dry_run: bool) -> int:
+def install_or_update(pack: Pack, target: Path, force: bool, dry_run: bool, git_hooks: bool = True) -> int:
     if pack.other_domain_manifests and target.exists():
         conflict = _cross_domain_conflict(pack, target)
         if conflict:
@@ -665,8 +808,9 @@ def install_or_update(pack: Pack, target: Path, force: bool, dry_run: bool) -> i
             fragment_path = pack.repo_root / pack.settings_fragment
             if fragment_path.exists():
                 _print_settings_dry_run(fragment_path, target, owned_paths)
+        code = _git_hooks_step(pack, target, git_hooks, dry_run=True)
         print("\n(dry-run: nothing written)")
-        return EXIT_OK
+        return code
 
     ts = _timestamp()
     backup_dir = target / pack.backup_root_name / ts
@@ -722,7 +866,7 @@ def install_or_update(pack: Pack, target: Path, force: bool, dry_run: bool) -> i
     write_manifest(target, pack, manifest)
 
     print(f"\n{pack.name}: install/update complete -> {target}")
-    return EXIT_OK
+    return _git_hooks_step(pack, target, git_hooks, dry_run=False)
 
 
 # ---------------------------------------------------------------------------
@@ -820,7 +964,7 @@ def uninstall(pack: Pack, target: Path, force: bool, dry_run: bool) -> int:
 # ---------------------------------------------------------------------------
 
 
-def verify(pack: Pack, target: Path) -> int:
+def verify(pack: Pack, target: Path, git_hooks: bool = True) -> int:
     installed = load_manifest(target, pack)
     if installed is None:
         print(f"{pack.name}: not installed at {target}")
@@ -867,7 +1011,8 @@ def verify(pack: Pack, target: Path) -> int:
         for rel in unknown:
             print(f"  - {rel}")
 
-    return EXIT_OK if not (missing or modified or unknown) else 1
+    git_bad = _git_hooks_verify(pack, target) if git_hooks and pack.git_hooks_source else False
+    return EXIT_OK if not (missing or modified or unknown or git_bad) else 1
 
 
 # ---------------------------------------------------------------------------
@@ -906,6 +1051,7 @@ def main(pack: Pack, argv: List[str]) -> int:
     parser.add_argument("--target", default=None)
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument("--force", action="store_true")
+    parser.add_argument("--no-git-hooks", action="store_true", help="do not touch the per-repository git hooks")
 
     try:
         args = parser.parse_args(argv)
@@ -919,12 +1065,16 @@ def main(pack: Pack, argv: List[str]) -> int:
         print(f"error: {exc}", file=sys.stderr)
         return EXIT_USAGE_ERROR
 
+    git_hooks = not args.no_git_hooks
     if args.action in ("install", "update"):
-        return install_or_update(pack, target, force=args.force, dry_run=args.dry_run)
+        return install_or_update(pack, target, force=args.force, dry_run=args.dry_run, git_hooks=git_hooks)
     if args.action == "uninstall":
-        return uninstall(pack, target, force=args.force, dry_run=args.dry_run)
+        code = uninstall(pack, target, force=args.force, dry_run=args.dry_run)
+        if git_hooks and pack.git_hooks_source:
+            _git_hooks_uninstall(pack, target, args.dry_run)
+        return code
     if args.action == "verify":
-        return verify(pack, target)
+        return verify(pack, target, git_hooks=git_hooks)
 
     print(f"error: unknown action {args.action!r}", file=sys.stderr)
     return EXIT_USAGE_ERROR

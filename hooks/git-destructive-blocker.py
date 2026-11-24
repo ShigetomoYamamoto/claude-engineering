@@ -1,6 +1,32 @@
 #!/usr/bin/env python3
-"""PreToolUse(Bash): git の破壊的操作をブロックする"""
+"""PreToolUse(Bash): git の破壊的操作と、git ネイティブ hook の迂回経路をブロックする。
+
+役割: 保護ブランチへの commit/push 禁止の本体は git ネイティブ hook (リポジトリ毎に導入・
+CLAUDECODE=1 のときだけ作用)。本 hook はその補完で、hook を飛ばす経路を文字列照合で止める
+ベストエフォートの文字列ガード (不完全と承知の上で、トークナイザ/シェル模擬はしない)。
+迂回経路のブロック: (a) --no-verify (省略形 --no-veri 以降も) / git commit -n (b) core.hooksPath・
+include.path の設定 (c) claudeguard の書換 (d) GIT_CONFIG_* / CLAUDECODE の改変 (env -i も)
+(e) git send-pack・保護 ref への update-ref (f) .git/hooks の変更 (find -delete 含む)
+(g) git diff/log/show の --output (任意ファイルへ書込める) (h) push/fetch/pull/ls-remote/clone/archive の
+--upload-pack・--receive-pack・--exec (省略形・clone -u も。任意プログラムを実行できる) と git --exec-path=<dir>。
+読取 (--get/--list・get/list 構文・
+値引数の無い `git config <key>`) は許可。(b)(c) は git config / -c / --config-env を実際に呼ぶ
+セグメントだけが対象。CLAUDECODE の代入は文頭・; & | ( の直後・export/env 等の後だけ見る。
+散文の誤検知対策: シェルコメント、クォート付き heredoc の本文、-m/--message/--body/-b/--title/-t の
+クォート値は照合前に除く。クォート無し heredoc 内などでの言及は誤ブロックしうる (許容)。
+既知の限界: alias・変数経由・python -c での組立て・クォート付き heredoc を shell へ流す形
+(bash <<'EOF')・コマンド置換入りの -m 値・--git-dir/GIT_DIR の差替え・xargs 等でパイプから渡す
+config 値・Bash/Edit/Write での .git/config や hook の直接編集は検知できない。"""
 import json, sys, re, subprocess
+
+PROTECTED = (
+    'main', 'master',           # GitHub/Git デフォルトブランチ
+    'develop', 'development',   # Git Flow 開発ブランチ
+    'staging',                  # ステージング環境
+    'release',                  # リリースブランチ
+    'production', 'prod',       # 本番環境
+    'trunk',                    # Trunk-based development
+)
 
 def _strip_quotes(s):
     return s.strip('\'"')
@@ -47,21 +73,106 @@ def is_git_invocation(cmd, subcmd):
     pattern = rf'(?:^|&&|\|\||;|\n)\s*(?:\S+\s+)*git\s+(?:-C\s+\S+\s+)?{re.escape(subcmd)}\b'
     return bool(re.search(pattern, cmd, re.MULTILINE))
 
+_OPTS = r'(?:\s+-\S+(?:\s+[^-\s]\S*)?)*'  # git のグローバルオプション列 (-C <dir> / -c <kv> 等)
+
+def _sub(name):
+    """`git [グローバルopt...] <name>` (または git-<name>) にマッチする正規表現。"""
+    return rf'\bgit(?:-|{_OPTS}\s+){name}\b'
+
+# git config を実際に呼ぶ形: `git config` か、グローバルオプションの -c / --config-env
+_CFG = _sub('config') + rf'|\bgit{_OPTS}\s+(?:-c|--config-env)\b'
+# CLAUDECODE の代入が成立する位置: コマンド境界 / export・env 等の直後 / sh -c "..." の先頭
+# (grep・echo の引数や引用符内の CLAUDECODE=1 は代入ではない)。値のクォートは互いに素にして線形時間に保つ。
+_VAL = r'''(?:[^\s"']|"[^"]*"|'[^']*')*'''
+_CC = (r'(?:^|[;&|(`]|\{\s|\b(?:export|declare|typeset|readonly|env|time|nohup|exec|command|sudo|then|do|else)\s'
+       r'|\b(?:(?:ba|z|da|k)?sh\s+-\w+|eval)\s+["\']?)\s*(?:-\S+\s+(?:[^\s=-][^\s=]*\s+)?)*'
+       rf'(?:\w+={_VAL}\s+)*CLAUDECODE\+?=')
+
+# 任意プログラムを実行するリモートヘルパーのオプション。git は曖昧でない省略形も受理する
+# (実測: push --e/--exe、fetch --upl、ls-remote --u、push --rece 等) ので、接頭辞をすべて照合する。
+# --exec-path は別物 (接頭辞にならない) なので `(?![\w-])` で外れる。
+_RP_NAMES = ('upload-pack', 'receive-pack', 'exec')
+_RP_OPT = (r'(?<![\w-])--(?:' + '|'.join(sorted({n[:i] for n in _RP_NAMES for i in range(1, len(n) + 1)},
+           key=len, reverse=True)) + r')(?![\w-])')
+_RP_CMDS = '(?:push|fetch|pull|ls-remote|clone|archive)'
+
+def strip_comments(s):
+    """行頭または空白直後の # から行末までを除く。クォート (改行をまたぐ) と \\x の中の # は残す。"""
+    return re.sub(r'''(\\.|"(?:[^"\\]|\\.)*"|'[^']*')|(?:^|(?<=\s))#[^\n]*''',
+                  lambda m: m.group(1) or '', s, flags=re.M | re.S)
+
+def scrub_prose(cmd):
+    """照合前に散文を除く: クォート付き heredoc の本文と、-m 等のクォート値 (旗は残す)。"""
+    cmd = cmd.replace('\\\n', ' ')
+    cmd = re.sub(r'(?<!<)(<<-?\s*([\'"])(\w+)\2[^\n]*\n).*?^[ \t]*\3[ \t]*$', r'\1\3', cmd, flags=re.S | re.M)
+    return re.sub(r'(?<=\s)(-[A-Za-z]*[mbt]|--message|--body|--title)(=|\s*)("(?:[^"\\]|\\.)*"|\'[^\']*\')',
+                  r'\1\2""', cmd, flags=re.S)
+
+def _is_read(seg):
+    """git config の読取か。書込系フラグが無く、--get 系/--list/-l/--show-origin があるか、
+    新構文 get/list か、値引数の無い `config <key>` (位置引数 1 個以下)。"""
+    m = re.search(_sub('config') + r'(.*)', seg)
+    if not m or re.search(r'--(?:unset|add|replace-all|remove-|rename-)', m.group(1)):
+        return False
+    if re.search(r'--get\b|--list\b|\s-l\b|--show-origin\b', m.group(1)):
+        return True
+    args = re.sub(r'(?<!\S)\d*[<>]+&?\s*[^\s"\']*', '', m.group(1))  # リダイレクトは値に数えない
+    pos = [t for t in args.split() if not t.startswith('-')]
+    return len(pos) <= 1 or pos[0] in ('get', 'list')
+
+HOOKS = r'\.git/hooks(?![\w.-])|(?<![\w-])hooks/(?:pre-commit|pre-merge-commit|pre-push)(?![\w.-])'
+MUTATE = (r'(?<![\w-])(?:rm|mv|cp|ln|chmod|install|tee|truncate|dd)(?=\s)|\s-delete\b'
+          r'|(?<![\w-])(?:sed|perl)\b[^;&|\n]*\s-[A-Za-z]*i|>>?\s*\S*(?:' + HOOKS + ')')
+
+def bypass_reason(cmd):
+    """git hook を迂回する経路に当たれば理由 (str) を返す。無ければ None。"""
+    c = scrub_prose(strip_comments(cmd))  # コメントを先に除く (後だと `# <<'EOF'` で後続行が散文扱いになる)
+    if re.search(_CC + r'|\bunset\b[^;&|\n]*\bCLAUDECODE\b'
+                 r'|\benv\b[^;&|\n]*(?:-u\s*|--unset[=\s])CLAUDECODE\b', c, re.I | re.M):
+        return 'CLAUDECODE の改変 (git hook は CLAUDECODE=1 のときだけ作用します)'
+    if 'git' not in c.lower():
+        return None
+    if re.search(r'(?i:--no-veri)', c) or re.search(_sub('commit') + r'[^;&|\n]*?\s-[A-Za-z]*n[A-Za-z]*(?=[\s;&|)"\']|$)', c):
+        return '--no-verify / git commit -n (pre-commit・pre-push 等を飛ばす)'
+    if re.search(r'(?<![$\w{])GIT_CONFIG_(?:GLOBAL|SYSTEM|NOSYSTEM|COUNT|PARAMETERS|KEY_\d+|VALUE_\d+)\+?=', c) \
+            or re.search(r'(?<![\w.])env\s+(?:-\S+\s+)*(?:-[A-Za-z]*i|--ignore-environment)\b', c):
+        return 'GIT_CONFIG_* / env -i による git 設定・環境の改変'
+    if re.search(_sub('send-pack'), c):
+        return 'git send-pack (pre-push が走らない)'
+    if re.search(_sub('update-ref') + r'[^;&|\n]*?(?i:(?:refs/)?heads/(?:' + '|'.join(PROTECTED) + r')(?![\w.-]))', c):
+        return '保護ブランチの ref を直接動かす git update-ref'
+    if re.search(_sub('(?:diff|log|show)') + r'[^;&|\n]*?(?<![\w-])--output(?![\w-])', c):
+        return 'git diff/log/show の --output (任意のファイルへ書込める。.git/hooks の上書き等に使える)'
+    if re.search(_sub(_RP_CMDS) + r'[^;&|\n]*?' + _RP_OPT, c) \
+            or re.search(_sub('clone') + r'[^;&|\n]*?\s-[A-Za-z]*u', c) \
+            or re.search(r'\bgit' + _OPTS + r'\s+--exec-path=', c):
+        return 'リモートヘルパーのプログラム実行オプション (--upload-pack / --receive-pack / --exec / clone -u / --exec-path=)'
+    for seg in re.split(r'&&|\|\||[;|\n]', c):
+        if re.search(_CFG, seg) and not _is_read(seg):
+            if re.search(r'(?i:core\.hookspath|\binclude(?:if\.\S*)?\.path)', seg):
+                return 'core.hooksPath / include.path の設定・上書き'
+            if re.search(r'(?i:claudeguard)', seg):
+                return 'claudeguard (リポジトリ単位の無効化キー) の書換'
+        if re.search(HOOKS, seg) and re.search(MUTATE, seg):
+            return '.git/hooks の変更'
+    return None
+
 try:
     data = json.load(sys.stdin)
     cmd = data.get('tool_input', {}).get('command', '')
 
-    if not cmd or 'git' not in cmd:
+    if not cmd:
         sys.exit(0)
 
-    PROTECTED = (
-        'main', 'master',           # GitHub/Git デフォルトブランチ
-        'develop', 'development',   # Git Flow 開発ブランチ
-        'staging',                  # ステージング環境
-        'release',                  # リリースブランチ
-        'production', 'prod',       # 本番環境
-        'trunk',                    # Trunk-based development
-    )
+    # git ネイティブ hook の迂回経路 (CLAUDECODE の改変は git を含まないコマンドでも対象)
+    reason = bypass_reason(cmd)
+    if reason:
+        print(f'🔴 git hook を迂回する操作です: {reason}')
+        print('保護ブランチへの commit/push 制限が無効になるため禁止です。必要なら本人が手動で実行してください。')
+        sys.exit(2)
+
+    if 'git' not in cmd:
+        sys.exit(0)
 
     # git commit on protected branch
     if is_git_invocation(cmd, 'commit'):

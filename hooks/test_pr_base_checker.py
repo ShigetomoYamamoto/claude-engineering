@@ -76,6 +76,169 @@ class PrBaseCheckerTest(unittest.TestCase):
     def test_quoted_main_base_without_marker_blocked(self):
         self.assertEqual(run_hook('gh pr create --base "main" --title x'), 2)
 
+    # --- 複数 base: すべての base が許可条件を満たす必要がある（最初の 1 つだけ見ない） ---
+    def test_multi_base_long_develop_then_main_blocked(self):
+        self.assertEqual(run_hook("gh pr create --base develop --title x --base main"), 2)
+
+    def test_multi_base_short_develop_then_main_blocked(self):
+        self.assertEqual(run_hook("gh pr create -B develop -B main --title x"), 2)
+
+    def test_multi_base_equals_form_blocked(self):
+        self.assertEqual(run_hook("gh pr create --base=develop --base=main"), 2)
+
+    def test_multi_base_main_then_develop_blocked(self):
+        self.assertEqual(run_hook("gh pr create --base main --base develop"), 2)
+
+    def test_multi_base_all_develop_allowed(self):
+        self.assertEqual(run_hook("gh pr create --base develop -B develop --title x"), 0)
+
+    def test_multi_base_main_with_marker_allowed(self):
+        # マーカー付きなら main は許可条件を満たす（develop と併記でも全 base が通る）
+        self.assertEqual(run_hook(f"gh pr create --base develop -B main  # {MARKER}"), 0)
+
+    def test_multi_base_main_without_marker_blocked(self):
+        self.assertEqual(run_hook("gh pr create --base develop -B main"), 2)
+
+    def test_multi_base_marker_does_not_cover_other_base(self):
+        self.assertEqual(run_hook(f"gh pr create -B main --base staging  # {MARKER}"), 2)
+
+    # --- base の書式 ---
+    def test_short_B_forms(self):
+        for cmd, want in [
+            ("gh pr create -B develop", 0),
+            ("gh pr create -B main", 2),
+            ("gh pr create -Bdevelop", 0),
+            ("gh pr create -Bmain", 2),
+            ("gh pr create -B=develop", 0),
+            ("gh pr create -B=main", 2),
+            ("gh pr create -dB develop", 0),
+            ("gh pr create -dB main", 2),
+            ("gh pr create -dBmain", 2),
+        ]:
+            with self.subTest(cmd=cmd):
+                self.assertEqual(run_hook(cmd), want)
+
+    def test_equals_form(self):
+        self.assertEqual(run_hook("gh pr create --base=develop"), 0)
+        self.assertEqual(run_hook("gh pr create --base=main"), 2)
+
+    def test_base_before_shell_operator_allowed(self):
+        self.assertEqual(run_hook("gh pr create --base develop && echo done"), 0)
+        self.assertEqual(run_hook("(gh pr create --base develop)"), 0)
+
+    # --- gh pr new は create の別名 ---
+    def test_pr_new_main_blocked(self):
+        self.assertEqual(run_hook("gh pr new --base main"), 2)
+
+    def test_pr_new_develop_allowed(self):
+        self.assertEqual(run_hook("gh pr new --base develop"), 0)
+
+    def test_pr_new_without_base_blocked(self):
+        self.assertEqual(run_hook("gh pr new --title x"), 2)
+
+    # --- 散文（title/body/heredoc）中の --base は base と数えない ---
+    def test_prose_in_body_ignored(self):
+        self.assertEqual(
+            run_hook('gh pr create --base develop --body "see --base main for hotfixes"'), 0)
+        self.assertEqual(
+            run_hook("gh pr create --base develop -b 'use -B main for hotfixes' -t x"), 0)
+
+    def test_prose_in_title_ignored(self):
+        self.assertEqual(run_hook('gh pr create -t "doc --base main" --base develop'), 0)
+
+    def test_heredoc_body_ignored(self):
+        cmd = ("gh pr create --base develop --title x --body \"$(cat <<'EOF'\n"
+               "Hotfixes go with --base main.\n-B main too, \"quoted\" and `code`\nEOF\n)\"")
+        self.assertEqual(run_hook(cmd), 0)
+
+    def test_preceding_git_B_flag_not_a_base(self):
+        # gh pr create より前の git checkout -B / grep -B を base と誤認しない
+        self.assertEqual(
+            run_hook("git checkout -B topic && git push -u origin topic && "
+                     "gh pr create --base develop"), 0)
+        self.assertEqual(run_hook("grep -B 3 foo f; gh pr create --base develop"), 0)
+
+    def test_heredoc_does_not_hide_real_base(self):
+        cmd = ("gh pr create --title x --body \"$(cat <<'EOF'\n--base develop\nEOF\n)\" "
+               "--base main")
+        self.assertEqual(run_hook(cmd), 2)
+
+    def test_prose_scrub_does_not_hide_real_base(self):
+        self.assertEqual(run_hook('gh pr create --body "x" --base main'), 2)
+        # 閉じ引用符が無ければ除去されず fail-closed
+        self.assertEqual(run_hook('gh pr create --title "oops --base main'), 2)
+
+    def test_command_substitution_in_head_allowed(self):
+        cmd = 'gh pr create --head "$(git branch --show-current)" --base develop'
+        self.assertEqual(run_hook(cmd), 0)
+
+    # --- create 以外の gh pr サブコマンドは対象外 ---
+    def test_other_pr_subcommands_passthrough(self):
+        for cmd in ["gh pr view 3", "gh pr list --base main", "gh pr edit 3 --base main"]:
+            with self.subTest(cmd=cmd):
+                self.assertEqual(run_hook(cmd), 0)
+
+    # --- gh 呼び出しごとにコマンド区切りまでだけを見る（後続コマンドの -B を base と誤認しない） ---
+    def test_following_git_B_flag_not_a_base(self):
+        for cmd in [
+            "gh pr create --base develop --fill && git checkout -B tmp",
+            "gh pr create --base develop; git checkout -B tmp",
+            "gh pr create --base develop || git checkout -B tmp",
+            "gh pr create --base develop\ngit checkout -B tmp",
+            "gh pr create --base develop ; foo --base main",
+            "gh pr create -B develop | tee out",
+        ]:
+            with self.subTest(cmd=cmd):
+                self.assertEqual(run_hook(cmd), 0)
+
+    def test_following_command_base_does_not_satisfy_missing_base(self):
+        # 区切りの後の -B develop は git のもの。gh 側に base が無いのでブロック。
+        self.assertEqual(run_hook("gh pr create --title x; git checkout -B develop"), 2)
+        self.assertEqual(run_hook("gh pr create && git checkout -B develop"), 2)
+
+    def test_every_invocation_checked_separately(self):
+        for cmd, want in [
+            ("gh pr create --base develop && gh pr create --base main", 2),
+            ("gh pr create --base main && gh pr create --base develop", 2),
+            ("gh pr create --base develop; gh pr new -B main", 2),
+            ("gh pr create --base develop || gh pr create --base develop", 0),
+            ("gh pr create --base develop && gh pr create --fill", 2),
+            ("gh pr create --base develop --base main && echo ok", 2),
+            ("gh pr create --base develop --base main", 2),
+        ]:
+            with self.subTest(cmd=cmd):
+                self.assertEqual(run_hook(cmd), want)
+
+    def test_marker_covers_every_invocation(self):
+        cmd = f"gh pr create --base main && gh pr create --base develop  # {MARKER}"
+        self.assertEqual(run_hook(cmd), 0)
+
+    def test_backslash_continuation_is_not_a_separator(self):
+        self.assertEqual(run_hook("gh pr create \\\n  --base develop \\\n  --title x"), 0)
+        self.assertEqual(run_hook("gh pr create \\\n  --base main \\\n  --title x"), 2)
+
+    def test_quoted_or_redirect_separator_does_not_cut(self):
+        for cmd, want in [
+            ('gh pr create --base develop --head "a;b" --base main', 2),
+            ('gh pr create --head "$(git rev-parse HEAD | cut -c1-8)" --base main', 2),
+            ('gh pr create --head "$(git rev-parse HEAD | cut -c1-8)" --base develop', 0),
+            ("gh pr create --base develop 2>&1 --base main", 2),
+            ("gh pr create --base develop 2>&1 | tee out", 0),
+        ]:
+            with self.subTest(cmd=cmd):
+                self.assertEqual(run_hook(cmd), want)
+
+    def test_heredoc_body_then_following_command(self):
+        head = ("gh pr create --base develop --title x --body \"$(cat <<'EOF'\n"
+                "Hotfixes go with gh pr create --base main and -B main.\nEOF\n)\"")
+        self.assertEqual(run_hook(head), 0)
+        self.assertEqual(run_hook(head + " && git checkout -B tmp"), 0)
+        self.assertEqual(run_hook(head + " && gh pr create --base main"), 2)
+
+    def test_prose_mentioning_gh_pr_create_ignored(self):
+        cmd = 'gh pr create --base develop --body "run gh pr create --base main later"'
+        self.assertEqual(run_hook(cmd), 0)
+
 
 if __name__ == "__main__":
     unittest.main()
