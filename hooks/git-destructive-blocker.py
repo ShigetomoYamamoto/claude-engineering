@@ -170,7 +170,7 @@ def bypass_reason(cmd):
     if re.search(_CC + r'|\bunset\b[^;&|\n]*\bCLAUDECODE\b'
                  r'|\benv\b[^;&|\n]*(?:-u\s*|--unset[=\s])CLAUDECODE\b', c, re.I | re.M):
         return 'CLAUDECODE の改変 (git hook は CLAUDECODE=1 のときだけ作用します)'
-    if 'git' not in c.lower():
+    if 'git' not in cq.lower():
         return None
     if any(re.search(r'(?i:--no-veri)', t) or re.search(_sub('commit') + r'[^;&|\n]*?\s-[A-Za-z]*n[A-Za-z]*(?=[\s;&|)"\']|$)', t)
            for t in (c, cq)):

@@ -692,7 +692,8 @@ class BypassGuardTest(unittest.TestCase):
                     "git push '--no-verify'", "git commit '-n' -m x",
                     'git commit -m x "--no-verify"', 'GIT_X=1 git commit --no-ver""ify',
                     'git diff "--out""put=.git/hooks/pre-commit"',
-                    'cp x ".git/""hooks/pre-commit"'):
+                    'cp x ".git/""hooks/pre-commit"',
+                    '"g"it commit "--no-ver""ify" -m x', "g\\it commit --no-ver\\ify -m x"):
             self.blocked(cmd)
 
     def test_quote_strip_no_new_false_positives(self):
