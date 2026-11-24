@@ -686,6 +686,21 @@ class BypassGuardTest(unittest.TestCase):
         self.blocked("find .git/hooks -exec rm {} +")
         self.allowed("find .git/hooks -type f")
 
+    # --- 引用符・\ で分けた --no-verify / --output / .git/hooks の変更 ---
+    def test_quote_split_bypass_blocked(self):
+        for cmd in ('git commit "--no-ver""ify" -m x', "git commit --no-ver\\ify -m x",
+                    "git push '--no-verify'", "git commit '-n' -m x",
+                    'git commit -m x "--no-verify"', 'GIT_X=1 git commit --no-ver""ify',
+                    'git diff "--out""put=.git/hooks/pre-commit"',
+                    'cp x ".git/""hooks/pre-commit"'):
+            self.blocked(cmd)
+
+    def test_quote_strip_no_new_false_positives(self):
+        for cmd in ('git commit -m "explain why --no-verify is banned"', "git commit -m 'n'",
+                    "git commit -F msg.txt", "git diff --stat", "git log --oneline -3", "cp a.txt b.txt",
+                    "curl -sS --max-time 10 -o /tmp/body.html -w '%{http_code}' https://example.workers.dev/"):
+            self.allowed(cmd)
+
     # --- hook 自体のソースに不正なエスケープ等の警告が無い (毎回 stderr に SyntaxWarning が出る回帰防止) ---
     def test_hook_source_compiles_without_warnings(self):
         with open(HOOK, encoding="utf-8") as f:
