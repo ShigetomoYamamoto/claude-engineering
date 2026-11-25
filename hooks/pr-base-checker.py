@@ -19,8 +19,13 @@ gh 呼び出しは 1 つずつ、自分のコマンド区切り（&& || ; | 改�
 環境変数を確実に読めないため（autorun は別サブシェルで gh を起動する）。
 末尾コメント位置にアンカーするのは、公開済みのモード名が PR の title/body に
 紛れただけでガードが無効化される事故（部分一致 fail-open）を防ぐため。
+
+プロジェクトごとの追加許可: `<project>/.claude/pr-bases.json`（`{"allow": ["main"]}`）の base も許可する。
+場所は hook 自身の位置（hooks/ の 1 つ上）で決め、cwd は使わない。パック管理外（installer は触らない）。
+無い・壊れている・形が違う・branch 名として不正な値は無視して develop のみに倒す（許可は決して広がらない）。
 """
 import json, sys, re
+from pathlib import Path
 
 # vibing が PR→main を出すときだけコマンド末尾コメントに付与する名前空間付きトークン。
 # 通常の散文・PR title/body には現れない値とし、vibing 以外はこれを発行しない（ADR-015）。
@@ -49,6 +54,18 @@ PROSE_RE = re.compile(
 # 単独の `&`（2>&1 等）は区切りとして扱わない。閉じない引用符は 1 文字として進む（fail-closed 側）。
 SEGMENT_RE = re.compile(
     r'(?:"(?:\\.|[^"\\])*"|\'[^\']*\'|\\.|&(?!&)|[^&|;\n])*', re.S)
+
+
+def load_extra_bases():
+    """pr-bases.json の allow（list）のうち、素の branch 名だけ。読めない・形が違えば空（fail-closed）。"""
+    try:
+        f = Path(__file__).resolve().parent.parent / 'pr-bases.json'
+        allow = json.loads(f.read_text(encoding='utf-8'))['allow']
+        if not isinstance(allow, list):
+            return set()
+        return {b for b in allow if isinstance(b, str) and re.fullmatch(r'[A-Za-z0-9._/-]+', b)}
+    except Exception:
+        return set()
 
 
 def strip_prose(cmd):
@@ -84,11 +101,13 @@ try:
     # すべての base が許可条件を満たす必要がある。
     # 末尾コメントに vibing マーカーがある main/master のみ例外許可（ADR-015）
     marker = VIBING_MARKER_RE.search(cmd)
+    allowed = {'develop'} | load_extra_bases()
     bad = [b for b in bases
-           if b != 'develop' and not (marker and b in VIBING_ALLOWED_BASES)]
+           if b not in allowed and not (marker and b in VIBING_ALLOWED_BASES)]
     if bad:
         print(f'🔴 PR の base が "{bad[0]}" になっています。base は "develop" のみ許可されます。')
         print('main / master への PR は禁止です（vibing は所定のマーカー付きのみ例外）。')
+        print('このプロジェクトで追加の base を許す場合は .claude/pr-bases.json に {"allow": ["<branch>"]} と書きます。')
         sys.exit(2)
     sys.exit(0)
 
