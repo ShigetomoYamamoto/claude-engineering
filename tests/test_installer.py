@@ -9,6 +9,7 @@ path.
 import contextlib
 import io
 import json
+import os
 import sys
 import tempfile
 import unittest
@@ -783,6 +784,68 @@ class VerifyTest(InstallerTestBase):
 
         # verify never writes
         self.assertEqual((self.target / "hooks" / "h.py").read_text(encoding="utf-8"), "tampered\n")
+
+
+class ManifestNoAbsolutePathTest(InstallerTestBase):
+    """The manifest is committed in user projects: it must not carry absolute (home) paths."""
+
+    def _manifest(self, pack):
+        text = (self.target / pack.manifest_name).read_text(encoding="utf-8")
+        return text, json.loads(text)
+
+    def test_fresh_install_manifest_has_no_target_and_no_absolute_path(self):
+        pack = self.make_pack()
+        self.run_cli(pack, "install")
+        text, manifest = self._manifest(pack)
+        self.assertNotIn("target", manifest)
+        self.assertIsNone(manifest["backup"])
+        self.assertEqual(set(manifest), {"pack", "revision", "installed_at", "backup", "files"})
+        self.assertNotIn(str(self.root), text)
+
+    def test_backup_is_recorded_relative_to_target(self):
+        pack = self.make_pack()
+        self.run_cli(pack, "install")
+        _write(self.src / "rules" / "a.md", "rule a v2\n")
+        self.run_cli(pack, "update")
+        text, manifest = self._manifest(pack)
+        backup = manifest["backup"]
+        self.assertFalse(os.path.isabs(backup), backup)
+        self.assertTrue(backup.startswith(pack.backup_root_name + "/"), backup)
+        self.assertTrue((self.target / backup).is_dir())
+        self.assertNotIn(str(self.root), text)
+
+    def test_partial_failure_manifest_has_no_absolute_path(self):
+        pack = self.make_pack()
+        original_copy2 = installer.shutil.copy2
+        calls = {"n": 0}
+
+        def flaky_copy2(src, dst, *a, **kw):
+            calls["n"] += 1
+            if calls["n"] == 2:
+                raise OSError("simulated disk failure")
+            return original_copy2(src, dst, *a, **kw)
+
+        with mock.patch.object(installer.shutil, "copy2", side_effect=flaky_copy2):
+            self.run_cli(pack, "install")
+        text, manifest = self._manifest(pack)
+        self.assertNotIn("target", manifest)
+        self.assertNotIn(str(self.root), text)
+
+    def test_old_manifest_with_absolute_paths_still_works(self):
+        pack = self.make_pack()
+        self.run_cli(pack, "install")
+        path = self.target / pack.manifest_name
+        manifest = json.loads(path.read_text(encoding="utf-8"))
+        manifest["target"] = str(self.target)
+        manifest["backup"] = str(self.target / pack.backup_root_name / "20200101-000000")
+        path.write_text(json.dumps(manifest), encoding="utf-8")
+
+        self.assertEqual(installer.main(pack, ["verify", "--target", str(self.target)]), installer.EXIT_OK)
+        self.assertEqual(self.run_cli(pack, "update"), installer.EXIT_OK)
+        _, rewritten = self._manifest(pack)
+        self.assertNotIn("target", rewritten)  # the next write drops the absolute paths
+        self.assertEqual(installer.main(pack, ["uninstall", "--target", str(self.target)]), installer.EXIT_OK)
+        self.assertFalse((self.target / "rules" / "a.md").exists())
 
 
 if __name__ == "__main__":

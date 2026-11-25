@@ -228,6 +228,13 @@ def load_manifest(target: Path, pack: Pack) -> Optional[dict]:
         return None
 
 
+def _manifest_backup(target: Path, backup_dir: Path) -> str:
+    """Backup location as recorded in the manifest: relative to `target`, so the
+    committed manifest never carries an absolute (home) path. Nothing reads it back;
+    an old manifest that still holds an absolute `backup` / `target` loads unchanged."""
+    return backup_dir.relative_to(target).as_posix()
+
+
 def write_manifest(target: Path, pack: Pack, data: dict) -> None:
     path = path_within_target(target, target / pack.manifest_name)
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -842,8 +849,7 @@ def install_or_update(pack: Pack, target: Path, force: bool, dry_run: bool, git_
             "pack": pack.name,
             "revision": _git_revision(pack.repo_root),
             "installed_at": datetime.now().isoformat(),
-            "target": str(target),
-            "backup": str(backup_dir) if backup_used else None,
+            "backup": _manifest_backup(target, backup_dir) if backup_used else None,
             "files": progress,
         }
         write_manifest(target, pack, manifest)
@@ -859,8 +865,7 @@ def install_or_update(pack: Pack, target: Path, force: bool, dry_run: bool, git_
         "pack": pack.name,
         "revision": _git_revision(pack.repo_root),
         "installed_at": datetime.now().isoformat(),
-        "target": str(target),
-        "backup": str(backup_dir) if backup_used else None,
+        "backup": _manifest_backup(target, backup_dir) if backup_used else None,
         "files": progress,
     }
     write_manifest(target, pack, manifest)
