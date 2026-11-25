@@ -73,11 +73,11 @@ claude-eng install
 
 ## 権限 (`permissions.allow`) の方針
 
-- **目的**: 自走フローで毎回確認が出ないよう、パックが実際に使う git / gh の操作と、deploy-runner の公開後検証に要る読み取り専用の `curl` 2形だけを許可します。それ以外は確認（auto モードでは分類器）を通ります。広い `Bash(git *)` などは付けません。
+- **目的**: 自走フローで毎回確認が出ないよう、パックが実際に使う git / gh の操作だけを許可します。curl は許可しません。それ以外は確認（auto モードでは分類器）を通ります。広い `Bash(git *)` などは付けません。
 - **許可するもの**:
   - git: `status` / `diff` / `log` / `show` / `branch` / `rev-parse` / `ls-files` / `add` / `commit` / `checkout` / `switch` / `restore` / `worktree`。`fetch` / `pull` / `push` は無引数か `origin` 宛のみです。
   - gh: `pr create` / `view` / `checks` / `list` / `diff`、`issue view` / `list`、`run watch` / `view` / `list`。
-  - curl: deploy-runner の公開後検証の2形だけです（下の「curl の許可と拒否」を参照）。書込系のフラグは `permissions.deny` で拒否します。
+  - curl: 許可しません（下の「curl の許可と拒否」を参照）。ローカルファイルを送る形・書込系のフラグは `permissions.deny` で拒否します。
 - **許可しないものと理由**:
   - `git config` / `git -c` / `git -C`: 設定経由で任意のコマンドを実行できます。`-C` は `*` と組むと `-c` を通す穴になります。
   - `git remote` / `reset` / `clean` / `rm` / `rebase`: 破壊的な操作か、宛先を変える操作です。サブコマンドとして許可しないだけで、許可したサブコマンドの破壊的なオプションまでは防げません（下の「許可はサブコマンド単位」を参照）。
@@ -85,23 +85,23 @@ claude-eng install
   - `gh pr merge` / `gh workflow run` / `issue`・`pr` への書込: 外向きで取り消せない操作は人が確認します。
   - `gh alias` / `gh extension`: 任意のコードを実行できます。
   - `claude *`: 許可に含めません（以前の許可は削除しました）。パックのエージェント・コマンドが実行する箇所がありません（`/init-autonomous` が人に向けて表示する `claude mcp add ...` の案内文だけです）。
-- **curl の許可と拒否**: 許可するのは deploy-runner の公開後検証が使う次の2形だけです。広い `Bash(curl *)` は付けません。
-  - ページ（GET）: `Bash(curl -sS --max-time * -o /tmp/* -w *)`（`curl -sS --max-time N -o /tmp/<body file> -w '%{http_code}' <url>`）。本文の保存先は `/tmp/` 配下に固定しています。一意な名前が要るときは、`mktemp /tmp/smoke-body.XXXXXX` を別のコマンドとして先に実行し、表示されたパスを curl の行へそのまま書きます（`$(...)` は使えません）。
-  - アセット（HEAD）: `Bash(curl -sS --head --max-time * -o /dev/null -w *)`（`curl -sS --head --max-time N -o /dev/null -w '%{http_code} %{content_type}' <url>`）。HEAD の形は `-o /dev/null` に固定しています。
-  - データ送信・アップロード・メソッド変更・設定ファイル読込のフラグ（`-d` / `--data*` / `--json` / `-F` / `--form` / `-T` / `--upload-file` / `-X` / `--request` / `-K` / `--config`）は、`permissions.deny` の `Bash(curl * <フラグ>*)` で拒否します。deny は allow より優先されます。
-  - ローカルファイルの中身を送る形（`-H @<ファイル>` / `--url-query @<ファイル>` / `--variable x@<ファイル>` / `$(cat <ファイル>)`）と、`/tmp/` から出る `..` は、`@` / `$(` / バッククォート / `..` を含む curl を `permissions.deny` の `Bash(curl *<文字列>*)` で拒否します。URL に `@`（ユーザー情報）や `..` を含む検証は通りません。
+- **curl の許可と拒否**: curl の許可は付けません。deploy-runner の公開後検証の curl も、通常の確認（auto モードでは分類器）を通ります。
+  - 許可しない理由: ワイルドカード付きの curl の許可は、後ろに足したフラグで広げられます（2つ目の `-o ~/.zshrc`、`-D`、`--trace`、`--output-dir` など）。URL に `$SECRET` のようなシェル展開を載せて、環境変数の値を外へ送ることもできます。以前出していた2形（`Bash(curl -sS --max-time * -o * -w *)` と `Bash(curl -sS --head --max-time * -o /dev/null -w *)`）は削除しました。`install.py update` は、この2つに一致する行だけを導入先の `permissions.allow` から取り除きます（利用者が足した curl の許可には触れません）。
+  - 拒否するもの（`permissions.deny`・deny は allow より優先）:
+    - データ送信・アップロード・メソッド変更・設定ファイル読込のフラグ: `-d` / `--data*` / `--json` / `-F` / `--form` / `-T` / `--upload-file` / `-X` / `--request` / `-K` / `--config`（`Bash(curl * <フラグ>*)`）。
+    - ローカルファイルの中身を送る形と、ディレクトリを抜ける形: `@`（`-H @<ファイル>` / `--url-query @<ファイル>` / `--variable x@<ファイル>`）、`$(`、バッククォート、`..`（`Bash(curl *<文字列>*)`）。URL に `@`（ユーザー情報）や `..` を含む curl は拒否されます。
   - 残るリスク:
     - 引数のパターンは壊れやすく、セキュリティ境界ではありません。
-    - ページの形は `--max-time *` の `*` が任意の文字に一致するため、`--max-time 10 -o ~/.zshrc -o /tmp/x` のように先に別の `-o` を置く形までは `permissions.allow` の文字列では防げません。`.git/`・`.claude/` への書込だけは `hooks/git-destructive-blocker.py` が止めます。
-    - クォートやオプションの連結（例 `-sd`）で deny を避けられる可能性があります。URL やヘッダーに値を載せる送信も止められません。
-    - プロジェクトの設定にすでに広い `Bash(curl *)` があれば、実効の許可は広いままです（deny は残りますが、上の理由で完全ではありません）。
+    - クォートやオプションの連結（例 `-sd`）で deny を避けられる可能性があります。`$VAR` を URL やヘッダーに載せる送信は止められません（`$` 全体を拒否すると通常のスクリプトが動かなくなるため）。
+    - 出力先が `.git/`・`.claude/` 配下の curl / wget だけは、`hooks/git-destructive-blocker.py` が止めます。
+    - プロジェクトやユーザー設定にすでに広い `Bash(curl *)` があれば、その許可は残ります（deny は残りますが、上の理由で完全ではありません）。
 - **許可はサブコマンド単位で、フラグまでは絞れません**: 許可は前方一致のため、許可した git サブコマンドの破壊的なオプション形も、確認なしで自動で通ります。
   - 例: `git branch -D` / `-f` / `-M`、`git checkout -B` / `-f`、`git switch -C` / `--discard-changes`、`git restore -- .`、`git worktree remove --force`、`git diff` / `log` / `show` の `--output=<ファイル>`（ファイルを書き込む）、`git push origin --mirror` / `--prune`。
   - これらを止めるのは、Claude 側の hook `hooks/git-destructive-blocker.py`（ベストエフォートの文字列判定。例: `reset --hard`（未プッシュのコミットがあるとき）・`clean -fd`・`checkout .`）か、git ネイティブの hook が捕まえた場合だけです。
   - 保護ブランチへの push / commit は、導入したリポジトリでは git ネイティブの hook が止めます（「Git フック」を参照）。
 - **限界**: 許可はコマンド文字列の前方一致で、許可したサブコマンドのオプション（例 `git fetch origin --upload-pack=...`）までは制限できません（`--upload-pack` / `--receive-pack` / `--exec` だけは、Claude 側の hook `hooks/git-destructive-blocker.py` がベストエフォートで止めます）。PR の base は `pr-base-checker.py` が文字列で確認します。いずれも [ADR-028](https://github.com/ShigetomoYamamoto/claude-core/blob/main/docs/adr/028-command-string-guard-limits.md) のとおり「コマンド文字列を判定する層は不完全」を前提とした多層防御であり、境界ではありません。
 - **例外が要るとき**: プロジェクト側の `.claude/settings.local.json` に追加します。パック管理外なので `update` で消えません。
-- **導入済みプロジェクトでの注意**: `install.py update` は `permissions.allow` / `permissions.deny` を和集合でマージし、古いエントリを消しません。すでに導入済みのプロジェクトは `update` したあと、そのプロジェクトの `.claude/settings.json` から旧4行（`Bash(git *)` `Bash(gh *)` `Bash(claude *)` `Bash(curl *)`）を手で削除する必要があります。`update` はそのリポジトリへ git フックも導入します（「Git フック (リポジトリごと)」を参照。飛ばすには `--no-git-hooks`）。またユーザー設定 `~/.claude/settings.json` など他スコープに同じ広い許可があると、`permissions.allow` はスコープ間で結合されるため、このパックで絞っても実効の許可は狭まりません。
+- **導入済みプロジェクトでの注意**: `install.py update` は `permissions.allow` / `permissions.deny` を和集合でマージし、古いエントリを消しません（例外: このパックが取り下げた curl の許可2行は、上の「curl の許可と拒否」のとおり `update` が取り除きます）。すでに導入済みのプロジェクトは `update` したあと、そのプロジェクトの `.claude/settings.json` から旧4行（`Bash(git *)` `Bash(gh *)` `Bash(claude *)` `Bash(curl *)`）を手で削除する必要があります。`update` はそのリポジトリへ git フックも導入します（「Git フック (リポジトリごと)」を参照。飛ばすには `--no-git-hooks`）。またユーザー設定 `~/.claude/settings.json` など他スコープに同じ広い許可があると、`permissions.allow` はスコープ間で結合されるため、このパックで絞っても実効の許可は狭まりません。
 
 ## Git フック (リポジトリごと)
 

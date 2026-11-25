@@ -116,7 +116,9 @@ def scrub_prose(cmd, keep_rp=False):
         parts = re.split(r'[;&|\n]', re.sub(r'["\'\\]', '', m.string[st[0]:m.start()]))
         one = len(parts) == 1
         st[0], st[1] = m.end(), (st[1] and one) or bool(re.search(_sub(_RP_CMDS), parts[-1]))
-        st[2] = (st[2] and one) or bool(re.search(r'(?<![\w@.=-])(?:git|gh)\s', parts[-1]))
+        sh = lambda t: re.search(r'(?<![\w-])(?:(?:ba|z|da|k|fi)?sh|eval|ssh|watch|xargs|su)(?![\w-])', t)  # git/gh と旗の間のシェル・eval 類
+        g = re.search(r'.*(?<![\w@.=-])(?:git|gh)\s', parts[-1])
+        st[2] = (st[2] and one and not sh(parts[-1])) or bool(g and not sh(parts[-1][g.end():]))
         # git/gh の旗でなければ散文ではない: bash -ct "git commit --no-verify" の -ct 等を -t と誤認して値を隠さない
         return m.group(0) if (keep_rp and st[1]) or not st[2] else m.group(1) + m.group(2) + '""'
     return re.sub(r'(?<=\s)(-[A-Za-z]*[mbt]|--message|--body|--title)(=|\s*)("(?:[^"\\]|\\.)*"|\'[^\']*\')',

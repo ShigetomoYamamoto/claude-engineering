@@ -575,6 +575,44 @@ class PermissionsDenyUnionTest(InstallerTestBase):
         self.assertEqual(merged["permissions"]["defaultMode"], "manual")
 
 
+class RetiredAllowTest(InstallerTestBase):
+    """`update` removes exactly the allow entries the pack retired; user entries stay."""
+
+    def test_retired_allow_removed_user_entries_kept(self):
+        fragment = {"permissions": {"allow": ["Y_allow"], "deny": ["Y_deny"]}}
+        _write(self.src / "settings-fragment.json", json.dumps(fragment))
+        pack = self.make_pack(settings_fragment="settings-fragment.json", retired_allow=["OLD_a", "OLD_b"])
+        live = {"permissions": {"allow": ["OLD_a", "user_allow", "OLD_b *", "OLD_b"], "deny": ["OLD_a"]}}
+        _write(self.target / "settings.json", json.dumps(live))
+
+        self.assertEqual(self.run_cli(pack, "update"), installer.EXIT_OK)
+
+        merged = json.loads((self.target / "settings.json").read_text(encoding="utf-8"))
+        self.assertEqual(merged["permissions"]["allow"], ["user_allow", "OLD_b *", "Y_allow"])
+        self.assertEqual(merged["permissions"]["deny"], ["OLD_a", "Y_deny"])  # deny is never pruned
+
+    def test_entry_still_in_fragment_is_not_removed(self):
+        fragment = {"permissions": {"allow": ["KEEP"]}}
+        _write(self.src / "settings-fragment.json", json.dumps(fragment))
+        pack = self.make_pack(settings_fragment="settings-fragment.json", retired_allow=["KEEP"])
+        _write(self.target / "settings.json", json.dumps({"permissions": {"allow": ["KEEP"]}}))
+        self.run_cli(pack, "update")
+        merged = json.loads((self.target / "settings.json").read_text(encoding="utf-8"))
+        self.assertEqual(merged["permissions"]["allow"], ["KEEP"])
+
+    def test_real_pack_removes_old_curl_allow_and_keeps_user_curl_rule(self):
+        import install
+        fragment = json.loads((_REPO_ROOT / "settings-fragment.json").read_text(encoding="utf-8"))
+        old = ["Bash(curl -sS --max-time * -o * -w *)", "Bash(curl -sS --head --max-time * -o /dev/null -w *)"]
+        live = {"permissions": {"allow": ["Bash(git status *)", *old, "Bash(curl https://mine.example/*)"]}}
+        merged = installer._merge_settings_dict(live, fragment, retired_allow=install.PACK.retired_allow)
+        allow = merged["permissions"]["allow"]
+        for entry in old:
+            self.assertNotIn(entry, allow)
+        self.assertIn("Bash(curl https://mine.example/*)", allow)
+        self.assertEqual(allow.count("Bash(git status *)"), 1)
+
+
 class ManifestCorruptWarningTest(InstallerTestBase):
     """FIX 5: a present-but-corrupt manifest warns; a missing one stays quiet."""
 

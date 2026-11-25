@@ -20,6 +20,12 @@ PACK = Pack(
     managed_paths=["rules", "commands", "agents", "skills", "hooks", "workflows", "templates", "docs"],
     settings_fragment="settings-fragment.json",
     other_domain_manifests=[".claude-work-agent.manifest.json"],
+    # curl allow rules shipped earlier and now withdrawn (any wildcard curl allow is unsafe; curl goes through
+    # the normal prompt / classifier). `update` removes exactly these from a project's settings.json.
+    retired_allow=[
+        "Bash(curl -sS --max-time * -o * -w *)",
+        "Bash(curl -sS --head --max-time * -o /dev/null -w *)",
+    ],
     git_hooks_source="git-hooks/guard.sh",  # NOT in managed_paths: copied into .git/hooks, never into .claude
 )
 

@@ -708,7 +708,10 @@ class BypassGuardTest(unittest.TestCase):
                     'sh -cm "git commit -n -m x"', 'zsh -cb "git -c core.hooksPath=/dev/null commit -m x"',
                     'ssh host -t "git commit --no-verify -m x"', 'watch -t "git commit --no-verify -m x"',
                     'git status && bash -ct "git commit --no-verify -m x"',
-                    'git commit -m "a" && bash -ct "git commit --no-verify -m x"'):
+                    'git commit -m "a" && bash -ct "git commit --no-verify -m x"',
+                    # git が同じセグメントの手前にあっても、間にシェル・eval 類があれば git の旗ではない
+                    'git bisect run sh -ct "git commit --no-verify -m x"',
+                    'git status $(bash -ct "git commit --no-verify -m x")'):
             self.blocked(cmd)
 
     def test_scrub_still_hides_git_gh_message_values(self):
