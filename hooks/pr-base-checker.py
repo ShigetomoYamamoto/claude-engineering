@@ -107,7 +107,7 @@ try:
     if bad:
         print(f'🔴 PR の base が "{bad[0]}" になっています。base は "develop" のみ許可されます。')
         print('main / master への PR は禁止です（vibing は所定のマーカー付きのみ例外）。')
-        print('このプロジェクトで追加の base を許す場合は .claude/pr-bases.json に {"allow": ["<branch>"]} と書きます。')
+        print('この base が必要な場合は、作業を止めて本人に確認してください。')
         sys.exit(2)
     sys.exit(0)
 
