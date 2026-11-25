@@ -86,6 +86,32 @@ class GitDestructiveBlockerTest(unittest.TestCase):
     def test_force_push_to_protected_branch_blocked(self):
         self.assertEqual(run_hook("git push --force origin main", self.repo), 2)
 
+    # --- force push も現在ブランチが保護対象なら止める（コマンドに保護名が無くても） ---
+    def test_force_push_without_protected_name_blocked_on_protected_branch(self):
+        for cmd in (
+            "git push --force",
+            "git push -f",
+            "git push --force-with-lease",
+            "git push -f origin",
+            "git push -f origin HEAD",
+        ):
+            with self.subTest(cmd=cmd):
+                self.assertEqual(run_hook(cmd, self.repo), 2)
+
+    def test_force_push_allowed_on_non_protected_branch(self):
+        _run(["git", "checkout", "-b", "feature/x"], self.repo)
+        for cmd in (
+            "git push -f",
+            "git push --force-with-lease origin feature/x",
+            "git push -f origin HEAD",
+        ):
+            with self.subTest(cmd=cmd):
+                self.assertEqual(run_hook(cmd, self.repo), 0)
+
+    def test_force_push_to_protected_name_blocked_on_non_protected_branch(self):
+        _run(["git", "checkout", "-b", "feature/x"], self.repo)
+        self.assertEqual(run_hook("git push -f origin main", self.repo), 2)
+
     def test_reset_hard_with_unpushed_commits_blocked(self):
         remote = os.path.join(self.tmpdir, "remote.git")
         _run(["git", "init", "--bare", "-b", "main", remote], self.tmpdir)
