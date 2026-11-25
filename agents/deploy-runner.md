@@ -203,10 +203,8 @@ from the contract's `target` (user-level file) or the environment. Both are set 
         `referenced`, and say so, if more than 500 files remain after these exclusions.
    - **Round**: request every URL once, without following redirects, a few at a time (e.g. `xargs -P 8`).
      Smoke-check pages: GET, e.g. `curl -sS --max-time 10 -o /tmp/<body file> -w '%{http_code}' <url>`. Put the
-     body file under `/tmp/`, with no `..`. If you need a unique name, run `mktemp /tmp/smoke-body.XXXXXX` as its
-     own command first and write the printed path into the curl line literally. The pack denies a curl command
-     that contains `@`, `$(`, a backtick or `..`, and it does not pre-approve any curl form: expect the normal
-     permission prompt or classifier for these commands. Assets: HEAD,
+     body file under `/tmp/`. If you need a unique name, run `mktemp /tmp/smoke-body.XXXXXX` as its own command
+     first and write the printed path into the curl line literally. Assets: HEAD,
      e.g. `curl -sS --head --max-time 5 -o /dev/null -w '%{http_code} %{content_type}' <url>` (no body is
      transferred, so a large file cannot time out; if assets answer HEAD with 405, use GET with `-o /dev/null`
      instead and say so in the report). A round is **green** only if every smoke-check page is 200 with its

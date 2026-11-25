@@ -26,6 +26,27 @@ PACK = Pack(
         "Bash(curl -sS --max-time * -o * -w *)",
         "Bash(curl -sS --head --max-time * -o /dev/null -w *)",
     ],
+    # curl deny rules shipped earlier and now withdrawn (git's own hooks protect branches; the Claude-side
+    # hook only blocks disabling them, so a blanket curl ban is out of policy). `update` removes exactly
+    # these from a project's settings.json. The unbalanced `Bash(curl *$(*)` was released in 271d117.
+    retired_deny=[
+        "Bash(curl * -d*)",
+        "Bash(curl * --data*)",
+        "Bash(curl * --json*)",
+        "Bash(curl * -F*)",
+        "Bash(curl * --form*)",
+        "Bash(curl * -T*)",
+        "Bash(curl * --upload-file*)",
+        "Bash(curl * -X*)",
+        "Bash(curl * --request*)",
+        "Bash(curl * -K*)",
+        "Bash(curl * --config*)",
+        "Bash(curl *@*)",
+        "Bash(curl *$(*)",
+        "Bash(curl *$(*)*)",
+        "Bash(curl *`*)",
+        "Bash(curl *..*)",
+    ],
     git_hooks_source="git-hooks/guard.sh",  # NOT in managed_paths: copied into .git/hooks, never into .claude
 )
 

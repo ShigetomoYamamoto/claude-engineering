@@ -10,6 +10,7 @@ import contextlib
 import io
 import json
 import os
+import shutil
 import sys
 import tempfile
 import unittest
@@ -589,7 +590,7 @@ class RetiredAllowTest(InstallerTestBase):
 
         merged = json.loads((self.target / "settings.json").read_text(encoding="utf-8"))
         self.assertEqual(merged["permissions"]["allow"], ["user_allow", "OLD_b *", "Y_allow"])
-        self.assertEqual(merged["permissions"]["deny"], ["OLD_a", "Y_deny"])  # deny is never pruned
+        self.assertEqual(merged["permissions"]["deny"], ["OLD_a", "Y_deny"])  # no retired_deny given: deny stays
 
     def test_entry_still_in_fragment_is_not_removed(self):
         fragment = {"permissions": {"allow": ["KEEP"]}}
@@ -611,6 +612,69 @@ class RetiredAllowTest(InstallerTestBase):
             self.assertNotIn(entry, allow)
         self.assertIn("Bash(curl https://mine.example/*)", allow)
         self.assertEqual(allow.count("Bash(git status *)"), 1)
+
+
+class RetiredDenyTest(InstallerTestBase):
+    """`update` removes exactly the deny entries the pack retired; user entries stay."""
+
+    def test_retired_deny_removed_user_entries_kept(self):
+        fragment = {"permissions": {"allow": ["Y_allow"]}}  # the pack ships no deny any more
+        _write(self.src / "settings-fragment.json", json.dumps(fragment))
+        pack = self.make_pack(settings_fragment="settings-fragment.json", retired_deny=["OLD_a", "OLD_b"])
+        live = {"permissions": {"allow": ["OLD_a"], "deny": ["OLD_a", "user_deny", "OLD_b *", "OLD_b"]}}
+        _write(self.target / "settings.json", json.dumps(live))
+
+        self.assertEqual(self.run_cli(pack, "update"), installer.EXIT_OK)
+
+        merged = json.loads((self.target / "settings.json").read_text(encoding="utf-8"))
+        self.assertEqual(merged["permissions"]["deny"], ["user_deny", "OLD_b *"])
+        self.assertEqual(merged["permissions"]["allow"], ["OLD_a", "Y_allow"])  # allow is not pruned by retired_deny
+
+    def test_entry_still_in_fragment_is_not_removed(self):
+        fragment = {"permissions": {"deny": ["KEEP"]}}
+        _write(self.src / "settings-fragment.json", json.dumps(fragment))
+        pack = self.make_pack(settings_fragment="settings-fragment.json", retired_deny=["KEEP"])
+        _write(self.target / "settings.json", json.dumps({"permissions": {"deny": ["KEEP"]}}))
+        self.run_cli(pack, "update")
+        merged = json.loads((self.target / "settings.json").read_text(encoding="utf-8"))
+        self.assertEqual(merged["permissions"]["deny"], ["KEEP"])
+
+    def test_real_pack_removes_the_retired_curl_denies_and_keeps_user_entries(self):
+        import install
+        fragment = json.loads((_REPO_ROOT / "settings-fragment.json").read_text(encoding="utf-8"))
+        retired = [
+            "Bash(curl * -d*)", "Bash(curl * --data*)", "Bash(curl * --json*)", "Bash(curl * -F*)",
+            "Bash(curl * --form*)", "Bash(curl * -T*)", "Bash(curl * --upload-file*)", "Bash(curl * -X*)",
+            "Bash(curl * --request*)", "Bash(curl * -K*)", "Bash(curl * --config*)", "Bash(curl *@*)",
+            "Bash(curl *$(*)*)", "Bash(curl *`*)", "Bash(curl *..*)",
+        ]
+        unbalanced = "Bash(curl *$(*)"  # the spelling released in 271d117
+        live = {"permissions": {
+            "allow": ["Bash(git status *)"],
+            "deny": [*retired, unbalanced, "Bash(rm -rf /*)", "Bash(curl * -o*)"],
+        }}
+        merged = installer._merge_settings_dict(
+            live, fragment, retired_allow=install.PACK.retired_allow, retired_deny=install.PACK.retired_deny
+        )
+        deny = merged["permissions"]["deny"]
+        for entry in [*retired, unbalanced]:
+            self.assertNotIn(entry, deny)
+        self.assertEqual(deny, ["Bash(rm -rf /*)", "Bash(curl * -o*)"])  # user-added entries stay
+        self.assertEqual(len(retired), 15)
+
+    def test_update_cli_with_real_fragment_removes_retired_curl_denies(self):
+        import install
+        shutil.copy2(_REPO_ROOT / "settings-fragment.json", self.src / "settings-fragment.json")
+        pack = self.make_pack(
+            settings_fragment="settings-fragment.json", retired_deny=install.PACK.retired_deny
+        )
+        live = {"permissions": {"deny": ["Bash(curl * -X*)", "Bash(rm -rf /*)", "Bash(curl *$(*)"]}}
+        _write(self.target / "settings.json", json.dumps(live))
+
+        self.assertEqual(self.run_cli(pack, "update"), installer.EXIT_OK)
+
+        merged = json.loads((self.target / "settings.json").read_text(encoding="utf-8"))
+        self.assertEqual(merged["permissions"]["deny"], ["Bash(rm -rf /*)"])
 
 
 class ManifestCorruptWarningTest(InstallerTestBase):
