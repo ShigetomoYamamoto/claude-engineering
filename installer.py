@@ -102,6 +102,10 @@ class Pack:
     other_domain_manifests: List[str] = field(default_factory=list)
     # Repo-relative script installed as the per-repository git hooks (see "git hooks" below).
     git_hooks_source: Optional[str] = None
+    # permissions.allow entries this pack used to ship and no longer does. `update` removes exactly
+    # these strings from the live settings.json (the merge otherwise only ever adds); anything
+    # else in the user's allow list is untouched.
+    retired_allow: List[str] = field(default_factory=list)
 
     def __post_init__(self) -> None:
         if self.kind not in ("global", "project"):
@@ -226,6 +230,13 @@ def load_manifest(target: Path, pack: Pack) -> Optional[dict]:
             file=sys.stderr,
         )
         return None
+
+
+def _manifest_backup(target: Path, backup_dir: Path) -> str:
+    """Backup location as recorded in the manifest: relative to `target`, so the
+    committed manifest never carries an absolute (home) path. Nothing reads it back;
+    an old manifest that still holds an absolute `backup` / `target` loads unchanged."""
+    return backup_dir.relative_to(target).as_posix()
 
 
 def write_manifest(target: Path, pack: Pack, data: dict) -> None:
@@ -480,7 +491,9 @@ def _merge_force_event(live_groups: object, frag_groups: list, owned_paths: Iter
     return list(frag_groups) + remaining
 
 
-def _merge_settings_dict(live: dict, fragment: dict, owned_paths: Iterable[str] = frozenset()) -> dict:
+def _merge_settings_dict(
+    live: dict, fragment: dict, owned_paths: Iterable[str] = frozenset(), retired_allow: Iterable[str] = ()
+) -> dict:
     """Merge `fragment` into `live`. Live keys are never deleted. For the
     forced hook events, only hooks owned by this pack (see `_hook_is_owned`)
     are replaced; foreign hooks survive (ADR-031)."""
@@ -502,7 +515,8 @@ def _merge_settings_dict(live: dict, fragment: dict, owned_paths: Iterable[str] 
                 if pk in ("allow", "deny"):
                     live_list = list(live_perm.get(pk) or [])
                     frag_list = list(frag_perm.get(pk) or [])
-                    merged_list = list(live_list)
+                    retired = set(retired_allow) if pk == "allow" else set()
+                    merged_list = [i for i in live_list if i not in retired or i in frag_list]
                     for item in frag_list:
                         if item not in merged_list:
                             merged_list.append(item)
@@ -544,6 +558,7 @@ def merge_settings(
     target: Path,
     backup_dir: Path,
     owned_paths: Iterable[str] = frozenset(),
+    retired_allow: Iterable[str] = (),
 ) -> bool:
     """Merge fragment_path into <target>/settings.json. Returns whether a
     backup of the previous settings.json was written.
@@ -571,7 +586,7 @@ def merge_settings(
         shutil.copy2(settings_path, dest)
         backed_up = True
 
-    merged = _merge_settings_dict(live, fragment, owned_paths=owned_paths)
+    merged = _merge_settings_dict(live, fragment, owned_paths=owned_paths, retired_allow=retired_allow)
     settings_path.parent.mkdir(parents=True, exist_ok=True)
     settings_path.write_text(
         json.dumps(merged, indent=2, ensure_ascii=False, sort_keys=True) + "\n",
@@ -581,7 +596,8 @@ def merge_settings(
 
 
 def _print_settings_dry_run(
-    fragment_path: Path, target: Path, owned_paths: Iterable[str] = frozenset()
+    fragment_path: Path, target: Path, owned_paths: Iterable[str] = frozenset(),
+    retired_allow: Iterable[str] = (),
 ) -> None:
     fragment = _load_fragment(fragment_path, target)
     settings_path = target / "settings.json"
@@ -597,7 +613,7 @@ def _print_settings_dry_run(
                 file=sys.stderr,
             )
             return
-    merged = _merge_settings_dict(live, fragment, owned_paths=owned_paths)
+    merged = _merge_settings_dict(live, fragment, owned_paths=owned_paths, retired_allow=retired_allow)
     print("=== settings.json merge (dry-run, nothing written) ===")
     print(json.dumps(merged, indent=2, ensure_ascii=False, sort_keys=True))
 
@@ -807,7 +823,7 @@ def install_or_update(pack: Pack, target: Path, force: bool, dry_run: bool, git_
         if pack.settings_fragment:
             fragment_path = pack.repo_root / pack.settings_fragment
             if fragment_path.exists():
-                _print_settings_dry_run(fragment_path, target, owned_paths)
+                _print_settings_dry_run(fragment_path, target, owned_paths, pack.retired_allow)
         code = _git_hooks_step(pack, target, git_hooks, dry_run=True)
         print("\n(dry-run: nothing written)")
         return code
@@ -829,7 +845,7 @@ def install_or_update(pack: Pack, target: Path, force: bool, dry_run: bool, git_
         if pack.settings_fragment:
             fragment_path = pack.repo_root / pack.settings_fragment
             if fragment_path.exists():
-                settings_backed_up = merge_settings(fragment_path, target, backup_dir, owned_paths)
+                settings_backed_up = merge_settings(fragment_path, target, backup_dir, owned_paths, pack.retired_allow)
         backup_used = files_backed_up or settings_backed_up
     except BoundaryViolation as exc:
         print(f"error: {exc}", file=sys.stderr)
@@ -842,8 +858,7 @@ def install_or_update(pack: Pack, target: Path, force: bool, dry_run: bool, git_
             "pack": pack.name,
             "revision": _git_revision(pack.repo_root),
             "installed_at": datetime.now().isoformat(),
-            "target": str(target),
-            "backup": str(backup_dir) if backup_used else None,
+            "backup": _manifest_backup(target, backup_dir) if backup_used else None,
             "files": progress,
         }
         write_manifest(target, pack, manifest)
@@ -859,8 +874,7 @@ def install_or_update(pack: Pack, target: Path, force: bool, dry_run: bool, git_
         "pack": pack.name,
         "revision": _git_revision(pack.repo_root),
         "installed_at": datetime.now().isoformat(),
-        "target": str(target),
-        "backup": str(backup_dir) if backup_used else None,
+        "backup": _manifest_backup(target, backup_dir) if backup_used else None,
         "files": progress,
     }
     write_manifest(target, pack, manifest)

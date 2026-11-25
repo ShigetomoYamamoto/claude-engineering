@@ -702,6 +702,66 @@ class BypassGuardTest(unittest.TestCase):
                     "curl -sS --max-time 10 -o /tmp/body.html -w '%{http_code}' https://example.workers.dev/"):
             self.allowed(cmd)
 
+    # --- 回帰: 散文の除去が shell -c の文字列を隠さない (bash -ct の -t を -t 旗と誤認していた) ---
+    def test_scrub_does_not_hide_shell_c_string_after_bundled_flag(self):
+        for cmd in ('bash -ct "git commit --no-verify -m x"', "bash -ct 'git push --no-verify origin feature/x'",
+                    'sh -cm "git commit -n -m x"', 'zsh -cb "git -c core.hooksPath=/dev/null commit -m x"',
+                    'ssh host -t "git commit --no-verify -m x"', 'watch -t "git commit --no-verify -m x"',
+                    'git status && bash -ct "git commit --no-verify -m x"',
+                    'git commit -m "a" && bash -ct "git commit --no-verify -m x"',
+                    # git が同じセグメントの手前にあっても、間にシェル・eval 類があれば git の旗ではない
+                    'git bisect run sh -ct "git commit --no-verify -m x"',
+                    'git status $(bash -ct "git commit --no-verify -m x")',
+                    # 先頭語が git/gh でなければ散文として除かない (インタプリタ名の一覧には頼らない)
+                    "$SHELL -ct 'git push --force origin main'", '/bin/zsh -ct "git push --force origin main"',
+                    'sudo git commit -m "x --no-verify"', 'env X=1 git commit -m "x --no-verify"',
+                    'xargs git commit -m "x --no-verify"',
+                    # 二重引用符内のコマンド置換は実行される
+                    'git commit -m "$(git push --force origin main)"', 'git commit -m `git push -f origin main`',
+                    'git commit -m "$(git commit --no-verify -m x)"', 'git commit -m "${x:-$(git commit -n -m y)}"'):
+            self.blocked(cmd)
+
+    def test_scrub_still_hides_git_gh_message_values(self):
+        for cmd in ('git commit -m "docs: explain why --no-verify is forbidden"',
+                    'git commit -m "a" -m "docs: why --no-verify is forbidden"',
+                    'git -C . commit -am "docs: why --no-verify is forbidden"',
+                    'git status && git commit -m "docs: why --no-verify is forbidden"',
+                    'gh pr create --title "t" --body "docs: why --no-verify is forbidden"',
+                    "cd repo && git commit -m 'note about --force'",
+                    'gh pr create --base develop -t "x" -b "mentions --no-verify"',
+                    'git commit -m "docs: $HOME and \\$(x) are expanded in messages"',
+                    'GIT_AUTHOR_NAME=x /usr/bin/git commit -m "docs: why --no-verify is forbidden"'):
+            self.allowed(cmd)
+
+    # --- 回帰: git config の読取判定が入れ子・-c 付きで fail-open にならない ---
+    def test_global_dash_c_hookspath_blocked_even_with_nested_or_read_config(self):
+        for cmd in ("git -c core.hooksPath=/tmp/x commit -m wip $(git config --list)",
+                    "git -c core.hooksPath=/tmp/x commit -m wip `git config --list`",
+                    "git -c core.hooksPath=/tmp/x config --get user.name",
+                    "git --config-env=core.hooksPath=EVIL config --list",
+                    "git -c include.path=/tmp/e.cfg config --list",
+                    "git -c claudeguard.disable=true config --get user.name",
+                    "git config core.hooksPath /tmp/x $(git config --list)",
+                    "git config core.hooksPath /tmp/x `git config --get user.name`"):
+            self.blocked(cmd)
+
+    def test_plain_config_reads_still_allowed(self):
+        for cmd in ("git config --get core.hooksPath", "git config --list", "git config core.hooksPath",
+                    "git config --show-origin --get-all core.hooksPath", "git config get core.hooksPath",
+                    "git -C . config --get claudeguard.disable", "git -c user.name=x log"):
+            self.allowed(cmd)
+
+    # --- sh -c "git ..." の保護ブランチ判定 (開き引用符で git 呼び出しが見えなかった) ---
+    def test_force_push_to_protected_branch_via_shell_c_blocked(self):
+        for cmd in ("bash -c 'git push --force origin main'", 'sh -c "git push -f origin master"',
+                    "bash -ct 'git push --force origin main'", "/bin/bash -c 'git push origin --delete main'"):
+            self.blocked(cmd)
+
+    def test_shell_c_without_protected_target_or_git_allowed(self):
+        for cmd in ('bash -c "git push --force origin feature/x"', 'bash -c "git status"',
+                    'echo "git push --force origin main"'):
+            self.allowed(cmd)
+
     # --- hook 自体のソースに不正なエスケープ等の警告が無い (毎回 stderr に SyntaxWarning が出る回帰防止) ---
     def test_hook_source_compiles_without_warnings(self):
         with open(HOOK, encoding="utf-8") as f:

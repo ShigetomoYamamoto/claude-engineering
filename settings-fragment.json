@@ -30,9 +30,7 @@
       "Bash(gh issue list *)",
       "Bash(gh run watch *)",
       "Bash(gh run view *)",
-      "Bash(gh run list *)",
-      "Bash(curl -sS --max-time * -o * -w *)",
-      "Bash(curl -sS --head --max-time * -o /dev/null -w *)"
+      "Bash(gh run list *)"
     ],
     "deny": [
       "Bash(curl * -d*)",
@@ -45,7 +43,11 @@
       "Bash(curl * -X*)",
       "Bash(curl * --request*)",
       "Bash(curl * -K*)",
-      "Bash(curl * --config*)"
+      "Bash(curl * --config*)",
+      "Bash(curl *@*)",
+      "Bash(curl *$(*)*)",
+      "Bash(curl *`*)",
+      "Bash(curl *..*)"
     ]
   },
   "hooks": {

@@ -14,8 +14,8 @@ include.path の設定 (c) claudeguard の書換 (d) GIT_CONFIG_* / CLAUDECODE �
 (a)(f)(g) も引用符・\\ を除いた版で照合する ("--no-ver""ify" 等の分割対策)。
 読取 (--get/--list・get/list 構文・値引数の無い `git config <key>`) は許可。(b)(c) は git config / -c / --config-env
 を実際に呼ぶセグメントだけが対象。CLAUDECODE の代入は文頭・; & | ( の直後・export/env 等の後だけ見る。
-散文の誤検知対策: シェルコメント、クォート付き heredoc の本文、-m/--message/--body/-b/--title/-t の
-クォート値は照合前に除く。クォート無し heredoc 内などでの言及は誤ブロックしうる (許容)。
+散文の誤検知対策: シェルコメント、クォート付き heredoc の本文、先頭語が git/gh のセグメントの -m/--message/--body/-b/--title/-t の
+クォート値は照合前に除く (bash -ct "..."・$SHELL -ct・sudo/env/xargs 経由・二重引用符内の $( ` ${ を含む値は除かない)。クォート無し heredoc 内などでの言及は誤ブロックしうる (許容)。
 既知の限界: alias・変数経由・python -c での組立て・クォート付き heredoc を shell へ流す形
 (bash <<'EOF')・コマンド置換入りの -m 値・--git-dir/GIT_DIR の差替え・xargs 等でパイプから渡す
 config 値・Bash/Edit/Write での .git/config や hook の直接編集は検知できない。"""
@@ -82,7 +82,8 @@ def _sub(name):
     return rf'\bgit(?:-|{_OPTS}\s+){name}\b'
 
 # git config を実際に呼ぶ形: `git config` か、グローバルオプションの -c / --config-env
-_CFG = _sub('config') + rf'|\bgit{_OPTS}\s+(?:-c|--config-env)\b'
+_GCFG = rf'\bgit{_OPTS}\s+(?:-c|--config-env)\b'  # グローバルの -c / --config-env
+_CFG = _sub('config') + '|' + _GCFG
 # CLAUDECODE の代入が成立する位置: コマンド境界 / export・env 等の直後 / sh -c "..." の先頭
 # (grep・echo の引数や引用符内の CLAUDECODE=1 は代入ではない)。値のクォートは互いに素にして線形時間に保つ。
 _VAL = r'''(?:[^\s"']|"[^"]*"|'[^']*')*'''
@@ -110,11 +111,17 @@ def scrub_prose(cmd, keep_rp=False):
     同じセグメントの手前に push/fetch 等がある旗の値は残す (fetch/ls-remote の -t/-m/-b は真偽値の旗)。"""
     cmd = cmd.replace('\\\n', ' ')
     cmd = re.sub(r'(?<!<)(<<-?\s*([\'"])(\w+)\2[^\n]*\n).*?^[ \t]*\3[ \t]*$', r'\1\3', cmd, flags=re.S | re.M)
-    st = [0, False]  # [直前の旗の終端, 同じセグメントの手前に push/fetch 等があるか] (旗どうしの間の文だけ見て線形時間)
+    st = [0, False, False]  # [直前の旗の終端, 同じセグメントの手前に push/fetch 等があるか, セグメントの先頭語が git/gh か] (旗どうしの間の文だけ見て線形時間)
     def val(m):
         parts = re.split(r'[;&|\n]', re.sub(r'["\'\\]', '', m.string[st[0]:m.start()]))
-        st[0], st[1] = m.end(), (st[1] and len(parts) == 1) or bool(re.search(_sub(_RP_CMDS), parts[-1]))
-        return m.group(0) if keep_rp and st[1] else m.group(1) + m.group(2) + '""'
+        one = len(parts) == 1
+        new = not (one and st[0])
+        st[0], st[1] = m.end(), (st[1] and one) or bool(re.search(_sub(_RP_CMDS), parts[-1]))
+        if new:  # 散文として除くのは、先頭語が git/gh のセグメントの旗だけ (bash -ct "..." / $SHELL -ct / env / xargs 等は除かない)
+            st[2] = bool(re.match(r'\s*(?:(?:\$?\(|\{)\s*)*(?:\w+=\S*\s+)*(?:[\w./~-]*/)?(?:git|gh)\s', parts[-1]))
+        v = m.group(3)  # 二重引用符内の $( ` ${ は実行・展開される (コマンド置換) ので散文ではない
+        return m.group(0) if (keep_rp and st[1]) or not st[2] or re.match(r'-\w*c', m.group(1)) \
+            or (v[0] == '"' and re.search(r'\$[({]|`', v)) else m.group(1) + m.group(2) + '""'  # -ct 等 c を含む束は -c "コマンド" の形
     return re.sub(r'(?<=\s)(-[A-Za-z]*[mbt]|--message|--body|--title)(=|\s*)("(?:[^"\\]|\\.)*"|\'[^\']*\')',
                   val, cmd, flags=re.S)
 
@@ -146,6 +153,8 @@ def dl_writes_protected(t):
 def _is_read(seg):
     """git config の読取か。書込系フラグが無く、--get 系/--list/-l/--show-origin があるか、
     新構文 get/list か、値引数の無い `config <key>` (位置引数 1 個以下)。"""
+    if re.search(r'\$\(|`|' + _GCFG, seg):  # 入れ子の読取や -c 付きは読取扱いにしない (-c core.hooksPath=x ... $(git config --list))
+        return False
     m = re.search(_sub('config') + r'(.*)', seg)
     if not m or re.search(r'--(?:unset|add|replace-all|remove-|rename-)', m.group(1)):
         return False
@@ -217,6 +226,9 @@ try:
 
     if 'git' not in cmd:
         sys.exit(0)
+    # sh -c "git push ..." ($SHELL -ct 等も) の開き引用符を外し、git 呼び出しを行頭・演算子の直後と同じに見せる (以降の保護ブランチ判定用)
+    cmd = re.sub(r'''(\s-\w*c\w*\s+)["']''', r'\1', cmd)
+    cmd = re.sub(r'\$\(|`', '; ', cmd)  # コマンド置換の中の git push 等も行頭・演算子の直後と同じに見せる
 
     # git commit on protected branch
     if is_git_invocation(cmd, 'commit'):

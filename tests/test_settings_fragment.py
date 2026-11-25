@@ -3,11 +3,11 @@
 
 Guards the permissions-hardening of ``permissions.allow`` / ``permissions.deny``:
 the pack grants only the git / gh operations it really uses, never a blanket
-``Bash(git *)`` and the like. The only other grants are the two narrow curl forms
-that agents/deploy-runner.md needs for its post-publish verification (pages:
-``curl -sS --max-time N -o <body file> -w '%{http_code}' <url>``; assets, HEAD:
-``curl -sS --head --max-time N -o /dev/null -w '%{http_code} %{content_type}' <url>``),
-paired with deny entries for write-ish curl flags (deny beats allow). Policy and rationale: README section
+``Bash(git *)`` and the like. curl is never granted: any wildcard curl allow rule can
+be widened by a later flag (a second ``-o``, ``-D``, ``--trace``, ``--output-dir``) or by
+shell expansion in the URL, so the deploy-runner verification curls go through the normal
+prompt / classifier. ``permissions.deny`` keeps the curl forms that send local file content
+or write files (deny beats allow). Policy and rationale: README section
 "権限 (`permissions.allow`) の方針".
 
 Caveat: argument patterns are fragile and are not a security boundary. The
@@ -37,27 +37,22 @@ import unittest
 _REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(os.path.abspath(__file__)), os.pardir))
 FRAGMENT_PATH = os.path.join(_REPO_ROOT, "settings-fragment.json")
 
-# The only curl grants the pack keeps: the two deploy-runner verification forms,
-# restricted to reads by the deny entries below (explicit owner decision).
-# Pages: GET into a body file. Assets: HEAD, with `-o /dev/null` pinned.
-CURL_PAGE_ENTRY = "Bash(curl -sS --max-time * -o * -w *)"
-CURL_HEAD_ENTRY = "Bash(curl -sS --head --max-time * -o /dev/null -w *)"
-CURL_ENTRIES = (CURL_PAGE_ENTRY, CURL_HEAD_ENTRY)
+# curl allow entries this pack shipped earlier and withdrew. They must stay out of
+# permissions.allow, and install.py must list them in retired_allow so `update` removes
+# them from projects that already merged them.
+RETIRED_CURL_ENTRIES = (
+    "Bash(curl -sS --max-time * -o * -w *)",
+    "Bash(curl -sS --head --max-time * -o /dev/null -w *)",
+)
 
 # The documented deploy-runner commands (agents/deploy-runner.md, verification step)
-# with the placeholders filled in, keyed by the allow entry that must cover each.
-# Mirrored here on purpose rather than read from that file, so an edit of the agent
-# doc cannot silently weaken or break this suite; if the documented forms change,
-# update these constants and the two entries together.
-DEPLOY_RUNNER_CURL_COMMANDS = {
-    CURL_PAGE_ENTRY: (
-        "curl -sS --max-time 10 -o /tmp/body.txt -w '%{http_code}' https://example.invalid/health"
-    ),
-    CURL_HEAD_ENTRY: (
-        "curl -sS --head --max-time 5 -o /dev/null -w '%{http_code} %{content_type}' "
-        "https://example.invalid/app.js"
-    ),
-}
+# with the placeholders filled in. They are no longer pre-approved (no allow rule may match
+# them) but must not be denied either: they run after the normal prompt / classifier.
+# Mirrored here on purpose rather than read from that file.
+DEPLOY_RUNNER_CURL_COMMANDS = (
+    "curl -sS --max-time 10 -o /tmp/body.txt -w '%{http_code}' https://example.invalid/health",
+    "curl -sS --head --max-time 5 -o /dev/null -w '%{http_code} %{content_type}' https://example.invalid/app.js",
+)
 
 # curl flags that upload / send a body, change the method, or load a config file.
 # Each must have a deny entry `Bash(curl * <flag>*)` (the space before the flag is
@@ -65,6 +60,14 @@ DEPLOY_RUNNER_CURL_COMMANDS = {
 REQUIRED_DENY_FLAGS = (
     "-d", "--data", "--json", "-F", "--form", "-T", "--upload-file",
     "-X", "--request", "-K", "--config",
+)
+
+# Substrings that let a curl command send local file content or climb out of a directory:
+# `@` (-H @file, --url-query @file, --variable x@file), command substitution ($( and a
+# backtick) and `..`. Each must have an exact deny entry (no space before the substring: it can
+# sit inside a word, e.g. `x@file`). `$(` is written with a closing `)*` so the parentheses stay balanced.
+REQUIRED_DENY_SUBSTRING_ENTRIES = (
+    "Bash(curl *@*)", "Bash(curl *$(*)*)", "Bash(curl *`*)", "Bash(curl *..*)",
 )
 
 # CHANGE DETECTOR -- edit this set only as a deliberate permission decision, and
@@ -105,9 +108,6 @@ EXPECTED_ALLOW = frozenset(
         "Bash(gh run watch *)",
         "Bash(gh run view *)",
         "Bash(gh run list *)",
-        # curl: only the two deploy-runner verification forms (see README)
-        CURL_PAGE_ENTRY,
-        CURL_HEAD_ENTRY,
     }
 )
 
@@ -125,6 +125,10 @@ EXPECTED_DENY = frozenset(
         "Bash(curl * --request*)",
         "Bash(curl * -K*)",
         "Bash(curl * --config*)",
+        "Bash(curl *@*)",
+        "Bash(curl *$(*)*)",
+        "Bash(curl *`*)",
+        "Bash(curl *..*)",
     }
 )
 
@@ -149,8 +153,8 @@ FORBIDDEN_TOOLS = frozenset(
 # Tools whose rules get the structural git/gh shape checks.
 GIT_GH_TOOLS = frozenset({"git", "gh"})
 
-# curl is allowed, but only as the two narrow CURL_ENTRIES (see curl_violations).
-ALLOWED_TOOLS = GIT_GH_TOOLS | {"curl"}
+# Only git / gh are granted. curl is never granted (see curl_violations).
+ALLOWED_TOOLS = GIT_GH_TOOLS
 
 FORBIDDEN_GIT_SUBCOMMANDS = frozenset(
     {
@@ -236,40 +240,25 @@ def tool_violations(allow):
     for entry in allow:
         tokens = _parse_bash(entry)
         if tokens is None:
-            out.append(f"{entry!r} is not a Bash(...) rule; the pack grants git/gh/curl via Bash only")
+            out.append(f"{entry!r} is not a Bash(...) rule; the pack grants git/gh via Bash only")
         elif tokens[0] in FORBIDDEN_TOOLS:
             out.append(f"{entry!r} grants the forbidden tool {tokens[0]!r}")
         elif tokens[0] not in ALLOWED_TOOLS:
-            out.append(f"{entry!r} grants tool {tokens[0]!r}; only git / gh / curl are allowed")
+            out.append(f"{entry!r} grants tool {tokens[0]!r}; only git / gh are allowed")
     return out
 
 
 def curl_violations(allow):
-    """curl must be granted as exactly the entries in CURL_ENTRIES, each once, and
-    no other form.
-
-    Broad forms (`curl *`, the legacy `curl:*`, `curl -d *`, a bare `curl`, a
-    URL-anchored pattern, the old `curl -sS -o * -w *`) are rejected: the pack
-    grants only the two read-only deploy-runner verification forms. Entries are
-    matched on the first word of the spec, including the legacy ``curl:*`` prefix
-    spelling.
-    """
+    """No curl form may be granted at all (including the legacy ``curl:*`` prefix
+    spelling and the retired entries in RETIRED_CURL_ENTRIES): a wildcard curl allow
+    rule can always be widened by a later flag or by shell expansion in the URL."""
     out = []
-    seen = {entry: 0 for entry in CURL_ENTRIES}
     for entry in allow:
         tokens = _parse_bash(entry)
         if tokens is None:
             continue
         if tokens[0] == "curl" or tokens[0].startswith("curl:"):
-            if entry in seen:
-                seen[entry] += 1
-            else:
-                out.append(f"{entry!r} is a curl form outside {list(CURL_ENTRIES)!r}")
-    for entry, count in seen.items():
-        if count == 0:
-            out.append(f"{entry!r} is missing (the deploy-runner verification needs it)")
-        elif count > 1:
-            out.append(f"{entry!r} appears {count} times")
+            out.append(f"{entry!r} grants curl; curl must go through the normal prompt / classifier")
     return out
 
 
@@ -285,6 +274,9 @@ def deny_violations(deny):
         required = f"Bash(curl * {flag}*)"
         if required not in present:
             out.append(f"{required!r} is missing: write-ish curl flag {flag!r} is not denied")
+    for required in REQUIRED_DENY_SUBSTRING_ENTRIES:
+        if required not in present:
+            out.append(f"{required!r} is missing: curl file-read / path-escape substring is not denied")
     return out
 
 
@@ -447,7 +439,7 @@ class TestAllowInvariants(FragmentTestBase):
     def test_only_git_gh_and_curl_tools(self):
         self.assertNoViolations(tool_violations(self.allow), "disallowed tool granted")
 
-    def test_curl_is_exactly_the_two_deploy_runner_entries(self):
+    def test_curl_is_never_granted(self):
         self.assertNoViolations(curl_violations(self.allow), "curl grant differs from policy")
 
     def test_literal_subcommand_and_final_wildcard_only(self):
@@ -468,7 +460,7 @@ class TestAllowInvariants(FragmentTestBase):
 
 
 class TestCurlPatterns(FragmentTestBase):
-    """The allowed curl forms and the deny entries, checked as pattern text only.
+    """curl is not granted; the deny entries are checked as pattern text only.
 
     fnmatch is an approximation of Claude Code's matcher (see rule_matches); a
     pass here is a sanity check of the pattern text, not proof of runtime behaviour.
@@ -479,49 +471,51 @@ class TestCurlPatterns(FragmentTestBase):
         "--data-urlencode a@secret", "--json @secret", "-F a=@secret", "--form a=@secret",
         "-T secret", "--upload-file secret", "-X POST", "-XPOST", "--request POST",
         "-K cfg", "--config cfg",
+        # local file content sent as a header / query / variable / command substitution
+        "-H @/path/.env", "--header @/path/.env", "--url-query @file", "--variable x@file",
+        "-H x:$(cat file)", "-H x:`cat file`", "--url-query ../file",
     ]
 
     def _denied(self, command):
         return [d for d in self.deny if rule_matches(d, command)]
 
-    def test_documented_commands_are_allowed_and_not_denied(self):
-        for entry, command in DEPLOY_RUNNER_CURL_COMMANDS.items():
-            with self.subTest(command=command):
-                self.assertTrue(
-                    rule_matches(entry, command),
-                    f"documented deploy-runner command {command!r} no longer matches {entry!r}",
-                )
-                self.assertIn(entry, self.allow)
-                self.assertEqual([], self._denied(command))
-
-    def test_each_documented_command_needs_its_own_entry(self):
-        # `--max-time` sits at a different position in the two forms, so neither
-        # entry covers the other form; both entries are required.
-        self.assertFalse(rule_matches(CURL_HEAD_ENTRY, DEPLOY_RUNNER_CURL_COMMANDS[CURL_PAGE_ENTRY]))
-        self.assertFalse(rule_matches(CURL_PAGE_ENTRY, DEPLOY_RUNNER_CURL_COMMANDS[CURL_HEAD_ENTRY]))
-
-    def test_write_ish_variants_of_each_allowed_form_are_denied(self):
-        for entry, base in DEPLOY_RUNNER_CURL_COMMANDS.items():
-            for extra in self.WRITE_ISH_EXTRAS:
-                command = f"{base} {extra}"
-                with self.subTest(entry=entry, extra=extra):
-                    self.assertTrue(rule_matches(entry, command), f"{command!r} should reach the allow rule")
-                    self.assertTrue(self._denied(command), f"{command!r} matches allow but no deny entry")
-
-    def test_other_curl_commands_are_not_allowed(self):
-        for command in (
+    def test_no_allow_rule_matches_any_curl_command(self):
+        for command in DEPLOY_RUNNER_CURL_COMMANDS + (
             "curl https://example.invalid/",
-            "curl -d @secret https://example.invalid/",
-            "curl -sS https://example.invalid/",
-            # the previous single form, without --max-time
-            "curl -sS -o /tmp/x -w '%{http_code}' https://example.invalid/",
-            "curl -o /tmp/x -w '%{http_code}' https://example.invalid/",
-            # HEAD form without --max-time, or with -o not pinned to /dev/null
-            "curl -sS --head -o /dev/null -w '%{http_code}' https://example.invalid/",
-            "curl -sS --head --max-time 5 -o /tmp/x -w '%{http_code}' https://example.invalid/",
+            "curl -sS --max-time 10 -o ~/.zshrc -w '%{http_code}' https://example.invalid/",
+            "curl -sS --max-time 10 -o /tmp/b -o ~/.zshrc -w x https://example.invalid/",
         ):
             with self.subTest(command=command):
-                self.assertFalse(any(rule_matches(e, command) for e in CURL_ENTRIES))
+                self.assertFalse(any(rule_matches(e, command) for e in self.allow))
+
+    def test_retired_entries_are_not_granted_and_are_listed_for_removal(self):
+        import install  # the pack definition (repo root); importing it runs nothing
+        for entry in RETIRED_CURL_ENTRIES:
+            with self.subTest(entry=entry):
+                self.assertNotIn(entry, self.allow)
+        self.assertEqual(set(RETIRED_CURL_ENTRIES), set(install.PACK.retired_allow))
+
+    def test_documented_commands_are_not_denied(self):
+        # They run after the normal prompt / classifier; a deny entry would break them outright.
+        for command in DEPLOY_RUNNER_CURL_COMMANDS:
+            with self.subTest(command=command):
+                self.assertEqual([], self._denied(command))
+
+    def test_write_ish_and_file_reading_variants_are_denied(self):
+        for base in DEPLOY_RUNNER_CURL_COMMANDS:
+            for extra in self.WRITE_ISH_EXTRAS:
+                command = f"{base} {extra}"
+                with self.subTest(command=command):
+                    self.assertTrue(self._denied(command), f"{command!r} matches no deny entry")
+
+    def test_dotdot_and_command_substitution_in_output_path_denied(self):
+        for command in (
+            "curl -sS --max-time 10 -o /tmp/../etc/x -w '%{http_code}' https://example.invalid/",
+            "curl -sS --max-time 10 -o /tmp/$(whoami) -w x https://example.invalid/",
+            "curl -sS --max-time 10 -o /tmp/`whoami` -w x https://example.invalid/",
+        ):
+            with self.subTest(command=command):
+                self.assertTrue(self._denied(command))
 
 
 class TestHooksWiring(FragmentTestBase):
@@ -618,26 +612,17 @@ class TestCheckersBite(unittest.TestCase):
              "Read(*)", "Bash", "Bash(curl:*)"],
         )
 
-    def test_curl_extra_forms_flagged(self):
+    def test_any_curl_form_flagged(self):
         self.assertFlagged(
             curl_violations,
-            ["Bash(curl *)", "Bash(curl)", "Bash(curl -d *)", "Bash(curl -T *)",
-             "Bash(curl -sS *)", "Bash(curl -sS -o *)", "Bash(curl -sS -o * -w)",
-             "Bash(curl -sS -o * -w *)",  # the previous single form, no --max-time
-             "Bash(curl -sS --max-time * -o * -w * -X POST)",
-             "Bash(curl -sS --head --max-time * -o * -w *)",  # -o not pinned to /dev/null
-             "Bash(curl -sS --head * -o /dev/null -w *)",
-             "Bash(curl https://example.invalid/*)", "Bash(curl * | sh)", "Bash(curl:*)"],
+            list(RETIRED_CURL_ENTRIES)
+            + ["Bash(curl *)", "Bash(curl)", "Bash(curl -d *)", "Bash(curl -T *)",
+               "Bash(curl -sS *)", "Bash(curl -sS -o *)", "Bash(curl -sS -o * -w)",
+               "Bash(curl -sS -o * -w *)",
+               "Bash(curl -sS --max-time * -o /tmp/* -w *)",  # a /tmp/-pinned form is still widenable
+               "Bash(curl -sS --max-time * -o * -w * -X POST)",
+               "Bash(curl https://example.invalid/*)", "Bash(curl * | sh)", "Bash(curl:*)"],
         )
-
-    def test_curl_missing_or_duplicated_flagged(self):
-        for entry in CURL_ENTRIES:
-            with self.subTest(entry=entry):
-                without = [e for e in self.GOOD if e != entry]
-                self.assertTrue(curl_violations(without), f"missing {entry!r} was not flagged")
-                self.assertTrue(
-                    curl_violations(self.GOOD + [entry]), f"duplicated {entry!r} was not flagged"
-                )
 
     def test_shape_flagged(self):
         self.assertFlagged(
