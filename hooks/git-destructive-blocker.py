@@ -288,6 +288,12 @@ try:
     # git push --force / --force-with-lease to protected branch
     push_force = re.search(r'(?:^|&&|\|\||;|\n)\s*(?:\S+\s+)*git\s+push\s+.*(?:-f\b|--force\b|--force-with-lease\b)', cmd, re.MULTILINE)
     if push_force:
+        # 現在ブランチが保護対象なら、コマンドに名前が無くても (-f / HEAD 等) 保護ブランチを push することになる。fail-closed で止める
+        branch = current_branch(cmd)
+        if branch in PROTECTED:
+            print(f'🔴 保護されたブランチ "{branch}" から force push しようとしました。')
+            print('作業ブランチから PR を作成してください。')
+            sys.exit(2)
         for b in PROTECTED:
             if re.search(rf'\b{b}\b', cmd):
                 print(f'🔴 git push --force を {b} ブランチに対して実行しようとしました。')
