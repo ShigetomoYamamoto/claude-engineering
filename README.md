@@ -101,6 +101,17 @@ claude-eng install
 - **例外が要るとき**: プロジェクト側の `.claude/settings.local.json` に追加します。パック管理外なので `update` で消えません。
 - **導入済みプロジェクトでの注意**: `install.py update` は `permissions.allow` / `permissions.deny` を和集合でマージし、古いエントリを消しません（例外: このパックが取り下げた curl の許可2行と拒否15行は、上の「curl の扱い」のとおり `update` が取り除きます）。すでに導入済みのプロジェクトは `update` したあと、そのプロジェクトの `.claude/settings.json` から旧4行（`Bash(git *)` `Bash(gh *)` `Bash(claude *)` `Bash(curl *)`）を手で削除する必要があります。`update` はそのリポジトリへ git フックも導入します（「Git フック (リポジトリごと)」を参照。飛ばすには `--no-git-hooks`）。またユーザー設定 `~/.claude/settings.json` など他スコープに同じ広い許可があると、`permissions.allow` はスコープ間で結合されるため、このパックで絞っても実効の許可は狭まりません。
 
+## PR の宛先 (base) をプロジェクトごとに追加で許可する
+
+- 既定では、`hooks/pr-base-checker.py` は `gh pr create` の `--base` が `develop` 以外だとブロックします。
+- `main` しか無いリポジトリなど、特定のプロジェクトだけ別の宛先を許したいときは、そのプロジェクトの `.claude/pr-bases.json` に書きます。
+  - 例: `{"allow": ["main"]}`（`develop` は常に許可なので書かなくてよい）。
+  - 場所は hook 自身の位置（`.claude/hooks/` の 1 つ上）から決めます。作業ディレクトリでは決めません。
+  - プロジェクトが所有するファイルです。インストーラは作らず、`update` / `uninstall` でも触りません。
+  - ファイルが無い・JSON として壊れている・形が違う（`allow` が配列でない）・branch 名として不正な値（英数字と `. _ / -` 以外）は無視し、`develop` のみに倒れます。許可が広がる方向には失敗しません。
+- トレードオフ: Claude 自身がこのファイルを作れます（git config と違い、ユーザーの手を借りずに済みます）。その代わり、追加や変更は必ず PR の差分に出るので、レビューで確認してください。
+- この hook はコマンド文字列を見るだけのベストエフォートです。保護ブランチ自体への push / commit は、これまでどおり git ネイティブのフック（「Git フック」を参照）が止めます。
+
 ## Git フック (リポジトリごと)
 
 - `hooks/` の Claude Code 側のフックは、コマンド文字列を判定するベストエフォートの層です。不完全であることは [ADR-028](https://github.com/ShigetomoYamamoto/claude-core/blob/main/docs/adr/028-command-string-guard-limits.md) のとおりです。

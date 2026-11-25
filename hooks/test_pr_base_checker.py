@@ -11,7 +11,9 @@ main/master のみ例外的に許可（ADR-015）。マーカーが title/body �
 """
 import json
 import os
+import shutil
 import subprocess
+import tempfile
 import unittest
 
 HOOK = os.path.join(os.path.dirname(os.path.abspath(__file__)), "pr-base-checker.py")
@@ -238,6 +240,83 @@ class PrBaseCheckerTest(unittest.TestCase):
     def test_prose_mentioning_gh_pr_create_ignored(self):
         cmd = 'gh pr create --base develop --body "run gh pr create --base main later"'
         self.assertEqual(run_hook(cmd), 0)
+
+
+class ProjectPrBasesTest(unittest.TestCase):
+    """`<project>/.claude/pr-bases.json` の追加許可。hook を <tmp>/.claude/hooks/ に複製して起動する
+    （場所は hook 自身の位置から決まり、cwd では決まらないため、cwd は無関係な場所にする）。"""
+
+    def setUp(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.claude = os.path.join(tmp.name, ".claude")
+        hooks = os.path.join(self.claude, "hooks")
+        os.makedirs(hooks)
+        self.hook = os.path.join(hooks, "pr-base-checker.py")
+        shutil.copy(HOOK, self.hook)
+        self.cwd = tempfile.mkdtemp(dir=tmp.name)
+
+    def run_in_project(self, command: str) -> int:
+        proc = subprocess.run(
+            ["python3", self.hook],
+            input=json.dumps({"tool_input": {"command": command}}),
+            capture_output=True, text=True, cwd=self.cwd,
+        )
+        return proc.returncode
+
+    def write_bases(self, text: str):
+        with open(os.path.join(self.claude, "pr-bases.json"), "w", encoding="utf-8") as f:
+            f.write(text)
+
+    def test_no_file_keeps_develop_only(self):
+        self.assertEqual(self.run_in_project("gh pr create --base main"), 2)
+        self.assertEqual(self.run_in_project("gh pr create --base develop"), 0)
+
+    def test_allow_main_permits_main_only(self):
+        self.write_bases('{"allow": ["main"]}')
+        self.assertEqual(self.run_in_project("gh pr create --base main"), 0)
+        self.assertEqual(self.run_in_project("gh pr create --base master"), 2)
+        self.assertEqual(self.run_in_project("gh pr create --base develop"), 0)
+
+    def test_every_base_must_be_allowed(self):
+        self.write_bases('{"allow": ["main"]}')
+        self.assertEqual(self.run_in_project("gh pr create --base main --base master"), 2)
+        self.assertEqual(self.run_in_project("gh pr create --base develop -B main"), 0)
+
+    def test_bad_file_never_widens(self):
+        for text in ['{not json', '{"allow": "main"}', '{"allow": {"main": 1}}',
+                     '["main"]', '{"allow": [["main"]]}', '{"allow": [null, 1]}', '']:
+            with self.subTest(text=text):
+                self.write_bases(text)
+                self.assertEqual(self.run_in_project("gh pr create --base main"), 2)
+                self.assertEqual(self.run_in_project("gh pr create --base develop"), 0)
+
+    def test_string_allow_does_not_allow_its_characters(self):
+        self.write_bases('{"allow": "main"}')
+        self.assertEqual(self.run_in_project("gh pr create --base m"), 2)
+
+    def test_weird_names_are_ignored(self):
+        self.write_bases('{"allow": ["main; rm", "ma in", "main\\n", "$(x)", ""]}')
+        for base in ["main", "'main; rm'", "ma"]:
+            with self.subTest(base=base):
+                self.assertEqual(self.run_in_project(f"gh pr create --base {base}"), 2)
+
+    def test_valid_name_next_to_weird_one_still_works(self):
+        self.write_bases('{"allow": ["main; rm", "release/1.x"]}')
+        self.assertEqual(self.run_in_project("gh pr create --base release/1.x"), 0)
+        self.assertEqual(self.run_in_project("gh pr create --base main"), 2)
+
+    def test_file_is_found_from_the_hook_location_not_cwd(self):
+        # cwd 側（<cwd>/.claude/pr-bases.json）に置いても効かない
+        os.makedirs(os.path.join(self.cwd, ".claude"))
+        with open(os.path.join(self.cwd, ".claude", "pr-bases.json"), "w") as f:
+            f.write('{"allow": ["main"]}')
+        self.assertEqual(self.run_in_project("gh pr create --base main"), 2)
+
+    def test_vibing_marker_still_works_with_file(self):
+        self.write_bases('{"allow": ["staging"]}')
+        self.assertEqual(self.run_in_project(f"gh pr create --base main  # {MARKER}"), 0)
+        self.assertEqual(self.run_in_project(f"gh pr create --base other  # {MARKER}"), 2)
 
 
 if __name__ == "__main__":

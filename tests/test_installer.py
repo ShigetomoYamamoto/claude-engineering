@@ -677,6 +677,48 @@ class RetiredDenyTest(InstallerTestBase):
         self.assertEqual(merged["permissions"]["deny"], ["Bash(rm -rf /*)"])
 
 
+class ProjectOwnedPrBasesFileTest(InstallerTestBase):
+    """`<project>/.claude/pr-bases.json` は pack の管理外: plan にも manifest にも現れず、
+    update / uninstall / verify が触らない（インストーラが所有するのは managed_paths 配下のソースだけ）。"""
+
+    CONTENT = '{"allow": ["main"]}\n'
+
+    def _bases(self) -> Path:
+        return self.target / "pr-bases.json"
+
+    def test_plan_never_lists_the_file_and_update_uninstall_verify_leave_it(self):
+        pack = self.make_pack()
+        self.run_cli(pack, "install")
+        _write(self._bases(), self.CONTENT)
+
+        managed = installer.discover_managed_files(pack)
+        installed = installer.load_manifest(self.target, pack)
+        plan = installer.compute_plan(pack, self.target, managed, installed)
+        self.assertNotIn("pr-bases.json", [e.rel for e in plan])
+        self.assertNotIn("pr-bases.json", installed["files"])
+
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            self.assertEqual(self.run_cli(pack, "update", dry_run=True), installer.EXIT_OK)
+            self.assertEqual(installer.main(pack, ["verify", "--target", str(self.target)]), installer.EXIT_OK)
+        self.assertNotIn("pr-bases", buf.getvalue())  # not COLLISION / NEW / REMOVE_STALE / UNKNOWN
+
+        self.assertEqual(self.run_cli(pack, "update", force=True), installer.EXIT_OK)
+        self.assertEqual(self._bases().read_text(encoding="utf-8"), self.CONTENT)
+        self.assertEqual(
+            installer.main(pack, ["uninstall", "--target", str(self.target), "--force"]), installer.EXIT_OK)
+        self.assertEqual(self._bases().read_text(encoding="utf-8"), self.CONTENT)
+        self.assertFalse(list((self.target / pack.backup_root_name).rglob("pr-bases.json")))
+
+    def test_real_pack_does_not_ship_or_own_the_file(self):
+        import install
+        managed = installer.discover_managed_files(install.PACK)
+        self.assertNotIn("pr-bases.json", managed)
+        self.assertNotIn("pr-bases.json", [Path(r).name for r in managed])
+        # hook は <project>/.claude/hooks/ に入るので、hook の 1 つ上が .claude（= pr-bases.json の場所）
+        self.assertIn("hooks/pr-base-checker.py", managed)
+
+
 class ManifestCorruptWarningTest(InstallerTestBase):
     """FIX 5: a present-but-corrupt manifest warns; a missing one stays quiet."""
 
