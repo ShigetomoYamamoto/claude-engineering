@@ -711,7 +711,14 @@ class BypassGuardTest(unittest.TestCase):
                     'git commit -m "a" && bash -ct "git commit --no-verify -m x"',
                     # git が同じセグメントの手前にあっても、間にシェル・eval 類があれば git の旗ではない
                     'git bisect run sh -ct "git commit --no-verify -m x"',
-                    'git status $(bash -ct "git commit --no-verify -m x")'):
+                    'git status $(bash -ct "git commit --no-verify -m x")',
+                    # 先頭語が git/gh でなければ散文として除かない (インタプリタ名の一覧には頼らない)
+                    "$SHELL -ct 'git push --force origin main'", '/bin/zsh -ct "git push --force origin main"',
+                    'sudo git commit -m "x --no-verify"', 'env X=1 git commit -m "x --no-verify"',
+                    'xargs git commit -m "x --no-verify"',
+                    # 二重引用符内のコマンド置換は実行される
+                    'git commit -m "$(git push --force origin main)"', 'git commit -m `git push -f origin main`',
+                    'git commit -m "$(git commit --no-verify -m x)"', 'git commit -m "${x:-$(git commit -n -m y)}"'):
             self.blocked(cmd)
 
     def test_scrub_still_hides_git_gh_message_values(self):
@@ -720,6 +727,9 @@ class BypassGuardTest(unittest.TestCase):
                     'git -C . commit -am "docs: why --no-verify is forbidden"',
                     'git status && git commit -m "docs: why --no-verify is forbidden"',
                     'gh pr create --title "t" --body "docs: why --no-verify is forbidden"',
+                    "cd repo && git commit -m 'note about --force'",
+                    'gh pr create --base develop -t "x" -b "mentions --no-verify"',
+                    'git commit -m "docs: $HOME and \\$(x) are expanded in messages"',
                     'GIT_AUTHOR_NAME=x /usr/bin/git commit -m "docs: why --no-verify is forbidden"'):
             self.allowed(cmd)
 

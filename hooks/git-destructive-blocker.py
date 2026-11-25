@@ -14,8 +14,8 @@ include.path の設定 (c) claudeguard の書換 (d) GIT_CONFIG_* / CLAUDECODE �
 (a)(f)(g) も引用符・\\ を除いた版で照合する ("--no-ver""ify" 等の分割対策)。
 読取 (--get/--list・get/list 構文・値引数の無い `git config <key>`) は許可。(b)(c) は git config / -c / --config-env
 を実際に呼ぶセグメントだけが対象。CLAUDECODE の代入は文頭・; & | ( の直後・export/env 等の後だけ見る。
-散文の誤検知対策: シェルコメント、クォート付き heredoc の本文、git/gh を呼ぶセグメントの -m/--message/--body/-b/--title/-t の
-クォート値は照合前に除く (bash -ct "..." 等、git/gh の旗でない -t の値は除かない)。クォート無し heredoc 内などでの言及は誤ブロックしうる (許容)。
+散文の誤検知対策: シェルコメント、クォート付き heredoc の本文、先頭語が git/gh のセグメントの -m/--message/--body/-b/--title/-t の
+クォート値は照合前に除く (bash -ct "..."・$SHELL -ct・sudo/env/xargs 経由・二重引用符内の $( ` ${ を含む値は除かない)。クォート無し heredoc 内などでの言及は誤ブロックしうる (許容)。
 既知の限界: alias・変数経由・python -c での組立て・クォート付き heredoc を shell へ流す形
 (bash <<'EOF')・コマンド置換入りの -m 値・--git-dir/GIT_DIR の差替え・xargs 等でパイプから渡す
 config 値・Bash/Edit/Write での .git/config や hook の直接編集は検知できない。"""
@@ -111,16 +111,17 @@ def scrub_prose(cmd, keep_rp=False):
     同じセグメントの手前に push/fetch 等がある旗の値は残す (fetch/ls-remote の -t/-m/-b は真偽値の旗)。"""
     cmd = cmd.replace('\\\n', ' ')
     cmd = re.sub(r'(?<!<)(<<-?\s*([\'"])(\w+)\2[^\n]*\n).*?^[ \t]*\3[ \t]*$', r'\1\3', cmd, flags=re.S | re.M)
-    st = [0, False, False]  # [直前の旗の終端, 同じセグメントの手前に push/fetch 等があるか, git/gh があるか] (旗どうしの間の文だけ見て線形時間)
+    st = [0, False, False]  # [直前の旗の終端, 同じセグメントの手前に push/fetch 等があるか, セグメントの先頭語が git/gh か] (旗どうしの間の文だけ見て線形時間)
     def val(m):
         parts = re.split(r'[;&|\n]', re.sub(r'["\'\\]', '', m.string[st[0]:m.start()]))
         one = len(parts) == 1
+        new = not (one and st[0])
         st[0], st[1] = m.end(), (st[1] and one) or bool(re.search(_sub(_RP_CMDS), parts[-1]))
-        sh = lambda t: re.search(r'(?<![\w-])(?:(?:ba|z|da|k|fi)?sh|eval|ssh|watch|xargs|su)(?![\w-])', t)  # git/gh と旗の間のシェル・eval 類
-        g = re.search(r'.*(?<![\w@.=-])(?:git|gh)\s', parts[-1])
-        st[2] = (st[2] and one and not sh(parts[-1])) or bool(g and not sh(parts[-1][g.end():]))
-        # git/gh の旗でなければ散文ではない: bash -ct "git commit --no-verify" の -ct 等を -t と誤認して値を隠さない
-        return m.group(0) if (keep_rp and st[1]) or not st[2] else m.group(1) + m.group(2) + '""'
+        if new:  # 散文として除くのは、先頭語が git/gh のセグメントの旗だけ (bash -ct "..." / $SHELL -ct / env / xargs 等は除かない)
+            st[2] = bool(re.match(r'\s*(?:(?:\$?\(|\{)\s*)*(?:\w+=\S*\s+)*(?:[\w./~-]*/)?(?:git|gh)\s', parts[-1]))
+        v = m.group(3)  # 二重引用符内の $( ` ${ は実行・展開される (コマンド置換) ので散文ではない
+        return m.group(0) if (keep_rp and st[1]) or not st[2] or re.match(r'-\w*c', m.group(1)) \
+            or (v[0] == '"' and re.search(r'\$[({]|`', v)) else m.group(1) + m.group(2) + '""'  # -ct 等 c を含む束は -c "コマンド" の形
     return re.sub(r'(?<=\s)(-[A-Za-z]*[mbt]|--message|--body|--title)(=|\s*)("(?:[^"\\]|\\.)*"|\'[^\']*\')',
                   val, cmd, flags=re.S)
 
@@ -225,8 +226,9 @@ try:
 
     if 'git' not in cmd:
         sys.exit(0)
-    # sh -c "git push ..." の開き引用符を外し、git 呼び出しを行頭・演算子の直後と同じに見せる (以降の保護ブランチ判定用)
-    cmd = re.sub(r'''((?<![\w-])(?:ba|z|da|k)?sh\s+-\w*c\w*\s+)["']''', r'\1', cmd)
+    # sh -c "git push ..." ($SHELL -ct 等も) の開き引用符を外し、git 呼び出しを行頭・演算子の直後と同じに見せる (以降の保護ブランチ判定用)
+    cmd = re.sub(r'''(\s-\w*c\w*\s+)["']''', r'\1', cmd)
+    cmd = re.sub(r'\$\(|`', '; ', cmd)  # コマンド置換の中の git push 等も行頭・演算子の直後と同じに見せる
 
     # git commit on protected branch
     if is_git_invocation(cmd, 'commit'):
