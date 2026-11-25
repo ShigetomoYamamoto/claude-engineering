@@ -86,12 +86,13 @@ claude-eng install
   - `gh alias` / `gh extension`: 任意のコードを実行できます。
   - `claude *`: 許可に含めません（以前の許可は削除しました）。パックのエージェント・コマンドが実行する箇所がありません（`/init-autonomous` が人に向けて表示する `claude mcp add ...` の案内文だけです）。
 - **curl の許可と拒否**: 許可するのは deploy-runner の公開後検証が使う次の2形だけです。広い `Bash(curl *)` は付けません。
-  - ページ（GET）: `Bash(curl -sS --max-time * -o * -w *)`（`curl -sS --max-time N -o <body file> -w '%{http_code}' <url>`）。
-  - アセット（HEAD）: `Bash(curl -sS --head --max-time * -o /dev/null -w *)`（`curl -sS --head --max-time N -o /dev/null -w '%{http_code} %{content_type}' <url>`）。HEAD の形は `-o /dev/null` に固定しています。ページの形の `-o <パス>` は固定していません。
+  - ページ（GET）: `Bash(curl -sS --max-time * -o /tmp/* -w *)`（`curl -sS --max-time N -o /tmp/<body file> -w '%{http_code}' <url>`）。本文の保存先は `/tmp/` 配下に固定しています。一意な名前が要るときは、`mktemp /tmp/smoke-body.XXXXXX` を別のコマンドとして先に実行し、表示されたパスを curl の行へそのまま書きます（`$(...)` は使えません）。
+  - アセット（HEAD）: `Bash(curl -sS --head --max-time * -o /dev/null -w *)`（`curl -sS --head --max-time N -o /dev/null -w '%{http_code} %{content_type}' <url>`）。HEAD の形は `-o /dev/null` に固定しています。
   - データ送信・アップロード・メソッド変更・設定ファイル読込のフラグ（`-d` / `--data*` / `--json` / `-F` / `--form` / `-T` / `--upload-file` / `-X` / `--request` / `-K` / `--config`）は、`permissions.deny` の `Bash(curl * <フラグ>*)` で拒否します。deny は allow より優先されます。
+  - ローカルファイルの中身を送る形（`-H @<ファイル>` / `--url-query @<ファイル>` / `--variable x@<ファイル>` / `$(cat <ファイル>)`）と、`/tmp/` から出る `..` は、`@` / `$(` / バッククォート / `..` を含む curl を `permissions.deny` の `Bash(curl *<文字列>*)` で拒否します。URL に `@`（ユーザー情報）や `..` を含む検証は通りません。
   - 残るリスク:
     - 引数のパターンは壊れやすく、セキュリティ境界ではありません。
-    - ページの形の `-o <パス>` は、任意のファイルを書き込めます。
+    - ページの形は `--max-time *` の `*` が任意の文字に一致するため、`--max-time 10 -o ~/.zshrc -o /tmp/x` のように先に別の `-o` を置く形までは `permissions.allow` の文字列では防げません。`.git/`・`.claude/` への書込だけは `hooks/git-destructive-blocker.py` が止めます。
     - クォートやオプションの連結（例 `-sd`）で deny を避けられる可能性があります。URL やヘッダーに値を載せる送信も止められません。
     - プロジェクトの設定にすでに広い `Bash(curl *)` があれば、実効の許可は広いままです（deny は残りますが、上の理由で完全ではありません）。
 - **許可はサブコマンド単位で、フラグまでは絞れません**: 許可は前方一致のため、許可した git サブコマンドの破壊的なオプション形も、確認なしで自動で通ります。

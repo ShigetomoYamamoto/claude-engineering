@@ -202,7 +202,10 @@ from the contract's `target` (user-level file) or the environment. Both are set 
         re-implement that matching, use `referenced` for that project and say so in the report. Likewise use
         `referenced`, and say so, if more than 500 files remain after these exclusions.
    - **Round**: request every URL once, without following redirects, a few at a time (e.g. `xargs -P 8`).
-     Smoke-check pages: GET, e.g. `curl -sS --max-time 10 -o <body file> -w '%{http_code}' <url>`. Assets: HEAD,
+     Smoke-check pages: GET, e.g. `curl -sS --max-time 10 -o /tmp/<body file> -w '%{http_code}' <url>`. The body
+     file must be under `/tmp/` (the permission rule is pinned to that prefix), with no `..`. If you need a unique
+     name, run `mktemp /tmp/smoke-body.XXXXXX` as its own command first and write the printed path into the curl
+     line literally: no `$(...)`, backtick or `@` anywhere in a curl command (they are denied). Assets: HEAD,
      e.g. `curl -sS --head --max-time 5 -o /dev/null -w '%{http_code} %{content_type}' <url>` (no body is
      transferred, so a large file cannot time out; if assets answer HEAD with 405, use GET with `-o /dev/null`
      instead and say so in the report). A round is **green** only if every smoke-check page is 200 with its
